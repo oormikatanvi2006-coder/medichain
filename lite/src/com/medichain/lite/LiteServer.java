@@ -195,6 +195,10 @@ public final class LiteServer {
                         body.get("horizonDays") instanceof Number n ? n.intValue() : null));
             case "/api/analysis":
                 return forecast.analysis(q.get("district"), longOrNull(q.get("medicineId")), intOrNull(q.get("horizonDays")));
+            case "/api/scenario":
+                return forecast.scenario(q.get("district"), longOrNull(q.get("medicineId")), intOrNull(q.get("horizonDays")),
+                        q.containsKey("casePct") ? Double.parseDouble(q.get("casePct")) : 0,
+                        q.containsKey("demandPct") ? Double.parseDouble(q.get("demandPct")) : 0, q.get("disease"));
             case "/api/risk":
                 return forecast.risk(q.get("district"), q.get("medicines"), intOrNull(q.get("horizonDays")));
             case "/api/analytics":

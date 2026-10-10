@@ -130,3 +130,23 @@ ul.basis { margin: 0; padding-left: 18px; } ul.basis li { margin-bottom: 2px; }
 @media (max-width: 1100px) { .c334 { grid-template-columns: 1fr; } }
 .advice .b { overflow-x: auto; }
 td .lk { white-space: nowrap; }
+
+/* facility map */
+.map { width: 100%; height: auto; display: block; background: #fbfcfd; }
+.map text { font: 11px Tahoma, Arial, sans-serif; fill: #1c2530; }
+.map .lbl { paint-order: stroke; stroke: #fbfcfd; stroke-width: 3px; }
+.map .dot { stroke: #fff; stroke-width: 1.5; cursor: pointer; }
+.map .dot.sel { stroke: #1c2530; stroke-width: 2.5; }
+.map .link { fill: none; stroke: #23395d; stroke-width: 1.6; stroke-dasharray: 5 3; }
+.map .scale { stroke: #5b6673; stroke-width: 1.5; }
+.dotkey i { display: inline-block; width: 10px; height: 10px; border-radius: 50%; border: 0; margin-right: 5px; vertical-align: middle; }
+/* scenario */
+input[type=range] { width: 100%; padding: 0; }
+.delta.up { color: var(--out); font-weight: bold; } .delta.down { color: var(--ok); font-weight: bold; }
+.effect { background: #f1f7f2; border: 1px solid #cfe3d2; padding: 5px 8px; margin-top: 8px; }
+.meter { display: inline-block; width: 90px; height: 8px; background: #eceff3; vertical-align: middle; margin-right: 6px; }
+.meter i { display: block; height: 100%; background: var(--over); }
+
+.sub { color: var(--muted); padding-bottom: 10px; }
+h1 { padding-bottom: 10px; }
+.advice .kv th { width: 34%; }

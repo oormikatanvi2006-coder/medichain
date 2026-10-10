@@ -80,6 +80,9 @@ public class RecommendationService {
             r.setReceiverDaysAfter(t.receiverDaysAfter());
             r.setDonorDaysBefore(t.donorDaysBefore());
             r.setDonorDaysAfter(t.donorDaysAfter());
+            r.setExpirySavedUnits(t.expirySavedUnits());
+            r.setExpirySavedValue(t.expirySavedValue());
+            r.setCoverDaysGained(t.coverDaysGained());
             r.setUrgency(t.urgency());
             r.setRationale(t.rationale());
             r.setKeyFactors(String.join("\n", t.keyFactors()));

@@ -24,6 +24,7 @@ const tag = code => '<span class="tag ' + esc(code) + '">' + esc(WORD[code] || c
 const days = d => d == null ? '180+' : one(d);
 const opts = (list, sel, label, value) => list.map(o => { const v = value ? value(o) : o; return '<option value="' + esc(v) + '"' + (String(v) === String(sel) ? ' selected' : '') + '>' + esc(label ? label(o) : o) + '</option>'; }).join('');
 const panel = (title, body, extra) => '<section class="panel"><h2><div>' + title + '</div>' + (extra || '') + '</h2>' + body + '</section>';
+const kvRows = list => list.map(f => { const i = f.indexOf(': '); return i < 0 ? '<tr><td colspan="2">' + esc(f) + '</td></tr>' : '<tr><th>' + esc(f.slice(0, i)) + '</th><td>' + esc(f.slice(i + 2)) + '</td></tr>'; }).join('');
 const none = (cols, text) => '<tr><td class="none" colspan="' + cols + '">' + esc(text) + '</td></tr>';
 
 function toast(message, isError) {
@@ -37,7 +38,7 @@ const S = {
   overview: null, analytics: null, live: null, lastRefresh: null,
   search: {medicineId: null, facilityId: '', data: null, tab: 'batches'},
   ask: {text: 'Which facilities in the district are at risk of running out of paracetamol and ORS in the next 10 days, and where can stock come from?', result: null},
-  inv: {facilityId: null, medicineId: '', batches: []}, fr: {level: 'ALL', medicineId: ''}, fac: {district: ''}, history: [], health: null
+  inv: {facilityId: null, medicineId: '', batches: []}, sc: {casePct: 50, demandPct: 0, disease: '', medicineId: '', result: null}, fr: {level: 'ALL', medicineId: ''}, fac: {district: ''}, history: [], health: null
 };
 const store = {
   get(k) { try { return JSON.parse(sessionStorage.getItem(k)); } catch (e) { return null; } },
@@ -126,16 +127,16 @@ const weekly = (arr, weeks) => { const out = []; for (let w = weeks; w >= 1; w--
 function signinPage(message) {
   const r = S.regions;
   $('app').innerHTML = '<div class="signin"><div class="bar"><div class="sys">MediChain<small>Drug Stock Monitoring System</small></div><div class="who">' + esc(r ? r.stateName : '') + '</div></div><div class="mid">'
-    + '<div class="about"><h1>Drug Stock Monitoring System</h1><p>Stock position, stock-out forecast, expiry watch and inter-facility transfer advice for government health facilities.</p>'
+    + '<div class="about"><h1>Drug Stock Monitoring System</h1>'
     + '<table><tbody><tr><th>State</th><td>' + esc(r ? r.stateName : '-') + '</td></tr><tr><th>Districts on the system</th><td>' + (r ? r.districts.length : '-') + '</td></tr>'
-    + '<tr><th>Build</th><td>1.0 (proof of concept)</td></tr></tbody></table><p class="note">Proof-of-concept build with simulated stock and consumption data. Not an official government system.</p></div>'
+    + '<tr><th>Build</th><td>1.0 (proof of concept)</td></tr></tbody></table><p class="note">Proof of concept. Simulated data. Not an official government system.</p></div>'
     + '<section class="panel"><h2><div>Sign in</div></h2><form class="pad" id="loginForm"><label><span>User ID</span><input type="text" name="username" autocomplete="username" required autofocus></label>'
     + '<label><span>Password</span><input type="password" name="password" autocomplete="current-password" required></label>'
     + '<label><span>District</span><select name="district" required>' + (r ? opts(r.districts, store.get('mc.lastDistrict') || 'Vellore') : '') + '</select></label>'
     + '<div class="err" id="loginErr">' + esc(message || (r ? '' : 'Services are not reachable. Start inventory-service and forecast-service, then reload.')) + '</div><button class="go">Sign in</button>'
     + '<details><summary>Accounts in this PoC build</summary><table><tbody><tr><th>State administrator</th><td>admin</td><td>Admin@123</td></tr><tr><th>District pharmacist</th><td>dp.vellore</td><td>Vellore@123</td></tr>'
     + '<tr><td colspan="3">Each district has a dp.&lt;district&gt; account with password &lt;District&gt;@123.</td></tr></tbody></table></details></form></section></div>'
-    + '<div class="foot"><span>MediChain 1.0</span><span>State administrators open any district. District users open their own district only.</span></div></div>';
+    + '<div class="foot"><span>MediChain 1.0</span><span>Simulated data</span></div></div>';
   $('loginForm').onsubmit = async e => {
     e.preventDefault();
     const v = Object.fromEntries(new FormData(e.target).entries()), btn = e.target.querySelector('button');
@@ -156,13 +157,13 @@ function signedOut(message) {
 
 // ------------------------------------------------------------------ frame
 const NAV = [
-  ['Monitoring', [['dashboard', 'Dashboard'], ['search', 'Stock Status'], ['forecast', 'Forecast & Risk']]],
+  ['Monitoring', [['dashboard', 'Dashboard'], ['search', 'Stock Status'], ['forecast', 'Forecast & Risk'], ['scenario', 'Scenario Planning']]],
   ['Stores', [['inventory', 'Stores & Ledger'], ['redistribution', 'Transfers & Indents']]],
   ['Masters', [['facilities', 'Facilities'], ['medicines', 'Drug Master']]],
   ['Reports', [['analytics', 'Analytics'], ['reports', 'Reports']]],
   ['Administration', [['settings', 'Settings']]]
 ];
-const PAGES = {dashboard: dashboardPage, search: searchPage, forecast: forecastPage, inventory: inventoryPage, redistribution: transfersPage, facilities: facilitiesPage, medicines: medicinesPage, analytics: analyticsPage, reports: reportsPage, settings: settingsPage};
+const PAGES = {dashboard: dashboardPage, search: searchPage, forecast: forecastPage, scenario: scenarioPage, inventory: inventoryPage, redistribution: transfersPage, facilities: facilitiesPage, medicines: medicinesPage, analytics: analyticsPage, reports: reportsPage, settings: settingsPage};
 const TITLE = Object.fromEntries(NAV.flatMap(g => g[1]));
 const route = () => { const r = location.hash.replace('#/', ''); return PAGES[r] ? r : 'dashboard'; };
 
@@ -222,8 +223,8 @@ function paintLive() {
   const tf = $('todayFill'); if (tf) tf.textContent = l.fillRateTodayPct + '%';
 }
 function servicePanel() {
-  return '<div class="cols c2">' + panel('Fill rate by day <span>(last 30 days and today)</span>', '<div class="pad"><div class="key"><span><i style="border-color:#2e7d32"></i>Units issued as % of units demanded</span></div><canvas id="cFill"></canvas></div>')
-    + panel('Stock lines not fully supplied, by day <span>(last 30 days)</span>', '<div class="pad"><div class="key"><span><i class="b" style="border-color:#b3261e"></i>Facility-drug lines short on the day</span></div><canvas id="cShort"></canvas></div>') + '</div>';
+  return '<div class="cols c2">' + panel('Fill rate by day <span>(30 days)</span>', '<div class="pad"><div class="key"><span><i style="border-color:#2e7d32"></i>Issued / demanded, %</span></div><canvas id="cFill"></canvas></div>')
+    + panel('Lines short by day <span>(30 days)</span>', '<div class="pad"><div class="key"><span><i class="b" style="border-color:#b3261e"></i>Stock lines short</span></div><canvas id="cShort"></canvas></div>') + '</div>';
 }
 function serviceCharts() {
   const d = S.analytics.days, l = S.live; if (!d) return;
@@ -234,34 +235,79 @@ function serviceCharts() {
     labels: d.map((x, i) => ({i, text: dm(x.date)})).filter((_, i) => i % 5 === 0), tip: i => dm(d[i].date) + '  ' + d[i].linesShort + ' lines short, ' + num(d[i].unmetUnits) + ' units not supplied'});
 }
 
+// ------------------------------------------------------------------ facility map (inline SVG, no map tiles)
+const RISK_COLOR = {CRITICAL: '#b3261e', HIGH: '#c26a00', MODERATE: '#b59a00', LOW: '#2e7d32'};
+const STATUS_COLOR = {STOCKED_OUT: '#b3261e', UNDERSTOCKED: '#c26a00', ADEQUATE: '#2e7d32', OVERSTOCKED: '#1d5fa8', UNKNOWN: '#6b7280'};
+const shortName = n => { const p = String(n).split(' – '); return p.length > 1 ? p[1] : n; };
+/* points: [{id, name, type, latitude, longitude, color, note, act}]  links: [{from, to, label}] */
+function mapSvg(points, links, selectedId) {
+  if (!points.length) return '<p class="pad">No facilities to show.</p>';
+  const W = 640, pad = 46, lat0 = mean(points.map(p => p.latitude)), k = Math.cos(lat0 * Math.PI / 180);
+  const xs = points.map(p => p.longitude * k), ys = points.map(p => p.latitude);
+  const minX = Math.min(...xs), maxX = Math.max(...xs), minY = Math.min(...ys), maxY = Math.max(...ys);
+  const s = Math.min((W - 2 * pad - 60) / Math.max(maxX - minX, 0.02), (380 - 2 * pad) / Math.max(maxY - minY, 0.02));
+  const H = Math.max(240, Math.round((maxY - minY) * s + 2 * pad));
+  const ox = (W - 60 - (maxX - minX) * s) / 2, oy = (H - (maxY - minY) * s) / 2;
+  const X = p => ox + (p.longitude * k - minX) * s, Y = p => H - oy - (p.latitude - minY) * s, byId = {};
+  points.forEach(p => { byId[p.id] = p; });
+  const kmPerPx = 111.32 / s, barKm = [5, 10, 20, 50, 100].find(v => v / kmPerPx >= 50) || 100;
+  let h = '<svg class="map" viewBox="0 0 ' + W + ' ' + H + '" role="img" aria-label="Facility map"><defs><marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#23395d"/></marker></defs>'
+    + '<rect x="0.5" y="0.5" width="' + (W - 1) + '" height="' + (H - 1) + '" fill="none" stroke="#e3e6ea"/>';
+  links.forEach(l => { const a = byId[l.from], b = byId[l.to]; if (!a || !b) return;
+    const x1 = X(a), y1 = Y(a), x2 = X(b), y2 = Y(b), d = Math.hypot(x2 - x1, y2 - y1) || 1, r = 9;
+    h += '<line class="link" marker-end="url(#arr)" x1="' + (x1 + (x2 - x1) * r / d) + '" y1="' + (y1 + (y2 - y1) * r / d) + '" x2="' + (x2 - (x2 - x1) * r / d) + '" y2="' + (y2 - (y2 - y1) * r / d) + '"><title>' + esc(l.label) + '</title></line>'; });
+  points.forEach(p => { const r = p.type === 'GH' ? 8 : p.type === 'CHC' ? 6.5 : 5, x = X(p), y = Y(p);
+    h += '<circle class="dot' + (String(p.id) === String(selectedId) ? ' sel' : '') + '" cx="' + x + '" cy="' + y + '" r="' + r + '" fill="' + p.color + '" ' + p.act + '><title>' + esc(p.name + '. ' + p.note) + '</title></circle>'
+      + '<text class="lbl" x="' + (x + r + 4) + '" y="' + (y + 4) + '">' + esc(shortName(p.name)) + '</text>'; });
+  h += '<line class="scale" x1="14" y1="' + (H - 14) + '" x2="' + (14 + barKm / kmPerPx) + '" y2="' + (H - 14) + '"/><text x="' + (20 + barKm / kmPerPx) + '" y="' + (H - 10) + '">' + barKm + ' km</text></svg>';
+  return h;
+}
+const dotKey = (colors, words, extra) => '<div class="key dotkey" style="padding:6px 10px">' + Object.keys(colors).map(c => '<span><i style="background:' + colors[c] + '"></i>' + words[c] + '</span>').join('')
+  + '<span><i class="d" style="border-radius:0;height:0;width:16px;border-top:2px dashed #23395d"></i>' + extra + '</span></div>';
+function districtMap() {
+  const o = S.overview, order = ['CRITICAL', 'HIGH', 'MODERATE', 'LOW'], worst = {};
+  o.risks.forEach(r => { const w = worst[r.facilityId]; if (!w || order.indexOf(r.riskLevel) < order.indexOf(w.riskLevel) || (r.riskLevel === w.riskLevel && (r.daysToStockout ?? 999) < (w.daysToStockout ?? 999))) worst[r.facilityId] = r; });
+  const pts = myFacilities().filter(f => worst[f.id]).map(f => { const w = worst[f.id]; return {id: f.id, name: f.name, type: f.type, latitude: f.latitude, longitude: f.longitude, color: RISK_COLOR[w.riskLevel],
+    note: 'Lowest: ' + w.medicineName + ', ' + days(w.daysToStockout) + ' days of stock (' + RISK[w.riskLevel] + ')', act: 'data-act="open" data-med="' + w.medicineId + '" data-fac="' + f.id + '"'}; });
+  const links = o.transfers.filter(t => t.status === 'PROPOSED').map(t => ({from: t.fromFacilityId, to: t.toFacilityId, label: num(t.quantity) + ' ' + t.unit + ' of ' + t.medicineName + ', ' + one(t.distanceKm) + ' km'}));
+  return panel('Facility map <span>(stock-out risk)</span>', mapSvg(pts, links, null) + dotKey(RISK_COLOR, RISK, 'Transfer pending'));
+}
+function drugMap(d, sel) {
+  const row = {}; d.risks.forEach(r => { row[r.facilityId] = r; });
+  const pts = myFacilities().filter(f => row[f.id]).map(f => { const r = row[f.id]; return {id: f.id, name: f.name, type: f.type, latitude: f.latitude, longitude: f.longitude, color: STATUS_COLOR[r.stockStatus],
+    note: num(r.currentStock) + ' ' + r.unit + ', ' + days(r.daysToStockout) + ' days of stock (' + STATUS[r.stockStatus] + ')', act: 'data-act="pick" data-id="' + f.id + '"'}; });
+  const links = d.transfers.filter(t => t.status === 'PROPOSED').map(t => ({from: t.fromFacilityId, to: t.toFacilityId, label: num(t.quantity) + ' ' + t.unit + ', ' + one(t.distanceKm) + ' km'}));
+  const words = Object.assign({}, STATUS); delete words.UNKNOWN; const cols = Object.assign({}, STATUS_COLOR); delete cols.UNKNOWN;
+  return panel('Facility map <span>(stock status)</span>', mapSvg(pts, links, sel.facilityId) + dotKey(cols, words, 'Transfer pending'));
+}
 // ------------------------------------------------------------------ Dashboard
 function statusCounts(rows) { const c = {STOCKED_OUT: 0, UNDERSTOCKED: 0, ADEQUATE: 0, OVERSTOCKED: 0, UNKNOWN: 0}; rows.forEach(r => { c[r.stockStatus]++; }); return c; }
 function mixBar(c) { const t = sum(Object.values(c)) || 1; return '<div class="mix">' + Object.keys(c).map(k => c[k] ? '<i class="' + k + '" style="width:' + (c[k] / t * 100) + '%" title="' + STATUS[k] + ': ' + c[k] + '"></i>' : '').join('') + '</div>'; }
 function dashboardPage() {
   const o = S.overview, a = S.analytics, c = statusCounts(o.risks), due = o.risks.filter(r => r.atRiskInHorizon), pending = o.transfers.filter(t => t.status === 'PROPOSED');
-  let h = '<h1>District dashboard: ' + esc(S.district) + '</h1><p class="lead">' + o.retrieval.facilities + ' facilities, ' + o.retrieval.medicines + ' drugs, ' + o.risks.length + ' stock lines. Forecast base date ' + dmy(o.asOf) + '.</p>';
+  let h = '<h1>District dashboard: ' + esc(S.district) + '</h1><p class="sub">' + o.retrieval.facilities + ' facilities, ' + o.retrieval.medicines + ' drugs, ' + o.risks.length + ' stock lines</p>';
   h += '<div class="strip"><div class="o"><b>' + c.STOCKED_OUT + '</b><span>lines stocked out</span></div><div class="u"><b>' + c.UNDERSTOCKED + '</b><span>lines understocked</span></div><div class="k"><b>' + c.ADEQUATE + '</b><span>adequately stocked</span></div>'
     + '<div class="v"><b>' + c.OVERSTOCKED + '</b><span>overstocked</span></div><div class="o"><b>' + due.length + '</b><span>stock-out due in ' + S.horizon + ' days</span></div><div><b>' + pending.length + '</b><span>transfers awaiting approval</span></div>'
     + '<div><b>' + num(a.unitsAtExpiryRisk) + '</b><span>units likely to expire unused</span></div><div class="k"><b id="todayFill">' + (S.live ? S.live.fillRateTodayPct + '%' : '-') + '</b><span>fill rate today</span></div></div>';
 
-  h += panel('Query', '<form class="pad filters" data-form="ask" style="grid-template-columns:1fr auto"><label><span>Ask about stock-out risk by drug, district and period</span><input type="text" name="q" value="' + esc(S.ask.text) + '"></label><div class="act"><button class="go">Run query</button></div></form>' + askResult());
+  h += panel('Query', '<form class="pad filters" data-form="ask" style="grid-template-columns:1fr auto"><label><span>Question</span><input type="text" name="q" value="' + esc(S.ask.text) + '"></label><div class="act"><button class="go">Run query</button></div></form>' + askResult());
 
   const byMed = {}; o.risks.forEach(r => { (byMed[r.medicineId] = byMed[r.medicineId] || []).push(r); });
   h += '<div class="cols c32">' + panel('Stock status by drug <span>(number of facilities)</span>', '<div class="scroll"><table><thead><tr><th>Drug</th><th class="n">SOH</th><th class="n">AMC</th><th class="n">MOS</th><th class="n">Out</th><th class="n">Under</th><th class="n">Adequate</th><th class="n">Over</th><th>Distribution</th><th></th></tr></thead><tbody>'
     + S.meta.medicines.filter(x => byMed[x.id]).map(x => { const rows = byMed[x.id], s = statusCounts(rows), soh = sum(rows.map(r => r.currentStock)), amc = sum(rows.map(r => r.avgMonthlyConsumption));
       return '<tr><td>' + esc(x.name) + '</td><td class="n">' + num(soh) + '</td><td class="n">' + num(amc) + '</td><td class="n">' + (amc ? one(soh / amc) : '-') + '</td><td class="n">' + s.STOCKED_OUT + '</td><td class="n">' + s.UNDERSTOCKED
         + '</td><td class="n">' + s.ADEQUATE + '</td><td class="n">' + s.OVERSTOCKED + '</td><td>' + mixBar(s) + '</td><td><button class="lk" data-act="open" data-med="' + x.id + '" data-fac="">Open</button></td></tr>'; }).join('')
-    + '</tbody></table></div><div class="pad note">SOH: usable stock on hand. AMC: average monthly consumption over the last 90 days. MOS: months of stock (SOH / AMC). Understocked is below ' + S.meta.riskBands.MIN_STOCK_DAYS + ' days of stock, overstocked above ' + S.meta.riskBands.MAX_STOCK_DAYS + ' days.</div>')
+    + '</tbody></table></div><div class="pad note">SOH stock on hand, AMC average monthly consumption, MOS months of stock.</div>')
     + panel('Projected stock-outs <span>(earliest first)</span>', '<div class="scroll tall"><table><thead><tr><th>Facility</th><th>Drug</th><th class="n">SOH</th><th class="n">Days</th><th>Stock-out on</th><th>Risk</th><th></th></tr></thead><tbody>'
       + (o.risks.filter(r => r.riskLevel !== 'LOW').slice(0, 12).map(r => '<tr><td>' + esc(r.facilityName) + '</td><td>' + esc(r.medicineName) + '</td><td class="n">' + num(r.currentStock) + '</td><td class="n">' + days(r.daysToStockout) + '</td><td>' + dm(r.stockoutDate)
         + '</td><td>' + rk(r.riskLevel) + '</td><td><button class="lk" data-act="open" data-med="' + r.medicineId + '" data-fac="' + r.facilityId + '">Open</button></td></tr>').join('') || none(7, 'No stock line is below ' + S.meta.riskBands.MODERATE + ' days of stock.')) + '</tbody></table></div>') + '</div>';
-  return h + livePanel() + servicePanel();
+  return h + '<div class="cols c2">' + districtMap() + livePanel() + '</div>' + servicePanel();
 }
 function askResult() {
   const r = S.ask.result; if (!r) return '';
   return '<div class="pad" style="padding-top:0"><table class="kv"><tbody>' + r.pipeline.map(p => '<tr><th>' + esc(p.step) + '</th><td style="font-weight:normal">' + esc(p.detail) + '</td></tr>').join('')
     + '<tr><th>Result</th><td>' + esc(r.answer) + '</td></tr></tbody></table>' + (r.findings.length ? '<ul class="basis" style="margin-top:8px">' + r.findings.map(f => '<li>' + esc(f) + '</li>').join('') + '</ul>' : '')
-    + '<div class="acts"><a href="#/redistribution">Open transfer advice</a> <a href="#/forecast">Open forecast and risk</a></div></div>';
+    + '<div class="acts"><a href="#/redistribution">Transfers</a> <a href="#/forecast">Forecast &amp; Risk</a></div></div>';
 }
 
 // ------------------------------------------------------------------ Stock Status
@@ -269,7 +315,7 @@ function searchPage() {
   const d = S.search.data, m = med(S.search.medicineId);
   if (!d || !m) return '<h1>Stock status by facility</h1><p class="pad">Loading...</p>';
   const rows = d.risks, unit = m.unit, sel = rows.find(r => String(r.facilityId) === String(S.search.facilityId)) || rows[0], c = statusCounts(rows);
-  let h = '<h1>Stock status by facility</h1><p class="lead">Stock on hand, consumption, forecast and stock-out risk for one drug across the district.</p>';
+  let h = '<h1>Stock status by facility</h1>';
   h += panel('Selection', '<div class="pad filters"><label><span>Drug</span><select id="sMed">' + opts(S.meta.medicines, S.search.medicineId, x => x.name, x => x.id) + '</select></label>'
     + '<label><span>District</span><select id="sDist"' + (isAdmin() ? '' : ' disabled') + '>' + opts(S.meta.districts, S.district) + '</select></label>'
     + '<label><span>Facility (optional)</span><select id="sFac"><option value="">All facilities</option>' + opts(myFacilities(), S.search.facilityId, f => f.name, f => f.id) + '</select></label>'
@@ -282,25 +328,24 @@ function searchPage() {
   h += '<div class="cols c32">' + panel(esc(m.name) + ' <span>(' + esc(d.interpreted.district) + ', ' + esc(unit) + ')</span>', '<div class="scroll tall"><table><thead><tr><th>Facility</th><th class="n">SOH</th><th class="n">AMC</th><th class="n">MOS</th><th class="n">Forecast<small> /day</small></th><th class="n">Days of stock</th><th>Stock status</th><th>Risk</th></tr></thead><tbody>'
     + rows.map(r => '<tr class="pick' + (r === sel ? ' sel' : '') + '" data-act="pick" data-id="' + r.facilityId + '"><td>' + esc(r.facilityName) + '</td><td class="n">' + num(r.currentStock) + '</td><td class="n">' + num(r.avgMonthlyConsumption) + '</td><td class="n">' + (r.monthsOfStock == null ? '-' : r.monthsOfStock)
       + '</td><td class="n">' + one(r.forecastDailyDemand) + '</td><td class="n">' + days(r.daysToStockout) + '</td><td>' + st(r.stockStatus) + '</td><td>' + rk(r.riskLevel) + '</td></tr>').join('') + '</tbody></table></div>');
-  const tabs = [['batches', 'Batches'], ['history', 'Consumption'], ['forecast', 'Forecast'], ['risk', 'Risk basis']];
+  const tabs = [['batches', 'Batches'], ['history', 'Consumption'], ['forecast', 'Forecast']];
   h += '<section class="panel"><h2><div>' + esc(sel.facilityName) + '</div>' + rk(sel.riskLevel) + '</h2><div class="tabs">' + tabs.map(t => '<button data-act="tab" data-id="' + t[0] + '" class="' + (S.search.tab === t[0] ? 'on' : '') + '">' + t[1] + '</button>').join('') + '</div>' + facilityTab(sel, unit, d.asOf) + '</section></div>';
 
   const last30 = mean(sel.history.slice(-30)), change = last30 > 0 ? (sel.forecastDailyDemand - last30) / last30 * 100 : 0;
-  h += '<div class="cols c334">' + panel('Demand forecast', '<div class="pad"><table class="kv"><tbody><tr><th>Forecast, next ' + d.interpreted.horizonDays + ' days</th><td>' + one(sel.forecastDailyDemand) + ' ' + esc(unit) + '/day</td></tr><tr><th>Against last 30 days</th><td>' + (change >= 0 ? '+' : '') + Math.round(change)
+  const mine = d.transfers.filter(t => t.toFacilityId === sel.facilityId || t.fromFacilityId === sel.facilityId);
+  h += '<div class="cols c2">' + drugMap(d, sel) + panel('Transfer advice', '<div class="pad">' + (mine.length ? mine.map(adviceBlock).join('') : '<p>No transfer involves this facility for ' + esc(m.name) + '.</p><p class="note">' + esc(sel.suggestedAction) + '</p>') + '</div>') + '</div>';
+  h += '<div class="cols c2">' + panel('Demand forecast', '<div class="pad"><table class="kv"><tbody><tr><th>Forecast, next ' + d.interpreted.horizonDays + ' days</th><td>' + one(sel.forecastDailyDemand) + ' ' + esc(unit) + '/day</td></tr><tr><th>Against last 30 days</th><td>' + (change >= 0 ? '+' : '') + Math.round(change)
     + '%</td></tr><tr><th>Back-test error (14 days)</th><td>' + (sel.backtestErrorPct >= 0 ? sel.backtestErrorPct + '%' : 'n/a') + '</td></tr></tbody></table><div class="key" style="padding-top:8px"><span><i style="border-color:#1d5fa8"></i>Issued (weekly avg)</span><span><i class="d" style="border-color:#b3261e"></i>Forecast</span>'
     + (sel.linkedDisease ? '<span><i class="d" style="border-color:#2e7d32"></i>' + esc(sel.linkedDisease.toLowerCase()) + ' cases (scaled)</span>' : '') + '</div><canvas id="cDemand"></canvas></div>');
   h += panel('Stock-out risk', '<div class="pad"><table class="kv"><tbody><tr><th>Days of stock</th><td>' + days(sel.daysToStockout) + '</td></tr><tr><th>Projected stock-out</th><td>' + dmy(sel.stockoutDate) + '</td></tr><tr><th>Risk level</th><td>' + rk(sel.riskLevel)
-    + '</td></tr><tr><th>Probability of stock-out in 14 days</th><td>' + sel.stockoutProbabilityPct + '%</td></tr><tr><th>Stock status</th><td>' + st(sel.stockStatus) + '</td></tr></tbody></table><p style="padding:8px 0 4px"><b>Basis</b></p><ul class="basis">'
-    + sel.keyFactors.map(f => '<li>' + esc(f) + '</li>').join('') + '</ul></div>');
-  const mine = d.transfers.filter(t => t.toFacilityId === sel.facilityId || t.fromFacilityId === sel.facilityId);
-  h += panel('Transfer advice', '<div class="pad">' + (mine.length ? mine.map(adviceBlock).join('') : '<p>No transfer involves this facility for ' + esc(m.name) + '.</p><p class="note">' + esc(sel.suggestedAction) + '</p>') + '</div>') + '</div>';
+    + '</td></tr><tr><th>Probability of stock-out in 14 days</th><td>' + sel.stockoutProbabilityPct + '%</td></tr><tr><th>Stock status</th><td>' + st(sel.stockStatus) + '</td></tr>' + kvRows(sel.keyFactors) + '</tbody></table></div>') + '</div>';
   return h;
 }
 function facilityTab(r, unit, asOf) {
   if (S.search.tab === 'batches') {
     return '<div class="scroll"><table><thead><tr><th>Batch no.</th><th class="n">Qty</th><th>Mfg. date</th><th>Expiry date</th><th>Status</th></tr></thead><tbody>'
       + (r.batches.map(b => '<tr><td>' + esc(b.batchNo) + '</td><td class="n">' + num(b.quantity) + '</td><td>' + dmy(b.manufactureDate) + '</td><td>' + dmy(b.expiryDate) + '</td><td>' + tag(b.status) + '</td></tr>').join('') || none(5, 'No batches on record.'))
-      + '</tbody></table></div><div class="pad note">Usable stock ' + num(r.currentStock) + ' ' + esc(unit) + '. Expired batches are excluded from stock on hand. Near expiry means 90 days or less.</div>';
+      + '</tbody></table></div><div class="pad note">Usable stock ' + num(r.currentStock) + ' ' + esc(unit) + '</div>';
   }
   if (S.search.tab === 'history') {
     return '<div class="pad"><table class="kv"><tbody><tr><th>Average per day, last 7 days</th><td>' + one(mean(r.history.slice(-7))) + '</td></tr><tr><th>Average per day, last 30 days</th><td>' + one(mean(r.history.slice(-30))) + '</td></tr><tr><th>Last 14 days against previous 14</th><td>'
@@ -311,14 +356,13 @@ function facilityTab(r, unit, asOf) {
     return '<div class="pad"><div class="key"><span><i class="d" style="border-color:#b3261e"></i>Forecast ' + esc(unit) + ' per day, next 30 days</span></div><canvas id="cForecast"></canvas></div><div class="scroll"><table><thead><tr><th>Week from</th>' + weeks.map((_, i) => '<th class="n">' + dm(addDays(asOf, i * 7)) + '</th>').join('')
       + '<th class="n">30 days</th></tr></thead><tbody><tr><td>Forecast (' + esc(unit) + ')</td>' + weeks.map(w => '<td class="n">' + num(w) + '</td>').join('') + '<td class="n"><b>' + num(sum(r.forecast)) + '</b></td></tr></tbody></table></div>';
   }
-  return '<div class="pad"><table class="kv"><tbody><tr><th>Risk score</th><td>' + r.riskScore + ' / 100</td></tr><tr><th>Units likely to expire unused</th><td>' + num(r.unitsAtExpiryRisk) + '</td></tr><tr><th>Advice</th><td>' + esc(r.suggestedAction) + '</td></tr></tbody></table><ul class="basis" style="margin-top:8px">'
-    + r.keyFactors.map(f => '<li>' + esc(f) + '</li>').join('') + '</ul></div>';
+  return '';
 }
 function adviceBlock(t) {
   return '<div class="advice"><div class="h"><span>Transfer ' + num(t.quantity) + ' ' + esc(t.unit) + ' of ' + esc(t.medicineName) + '</span><span>' + rk(t.urgency) + ' ' + tag(t.status) + '</span></div><div class="b"><table><thead><tr><th></th><th>Facility</th><th class="n">SOH now</th><th class="n">Days</th><th class="n">SOH after</th><th class="n">Days</th></tr></thead><tbody>'
     + '<tr><td>From</td><td>' + esc(t.fromName) + '</td><td class="n">' + num(t.fromStockBefore) + '</td><td class="n">' + one(t.donorDaysBefore) + '</td><td class="n">' + num(t.fromStockAfter) + '</td><td class="n">' + one(t.donorDaysAfter) + '</td></tr>'
     + '<tr><td>To</td><td>' + esc(t.toName) + '</td><td class="n">' + num(t.toStockBefore) + '</td><td class="n">' + one(t.receiverDaysBefore) + '</td><td class="n">' + num(t.toStockAfter) + '</td><td class="n">' + one(t.receiverDaysAfter) + '</td></tr></tbody></table>'
-    + '<p style="padding:8px 0 4px"><b>Basis</b> (distance ' + one(t.distanceKm) + ' km)</p><ul class="basis">' + t.keyFactors.map(f => '<li>' + esc(f) + '</li>').join('') + t.batches.map(b => '<li>Batch to issue: ' + esc(b) + '</li>').join('') + '</ul>'
+    + '<table class="kv" style="margin-top:8px"><tbody>' + kvRows(['Distance: ' + one(t.distanceKm) + ' km'].concat(t.keyFactors, t.batches.map(b => 'Batch: ' + b))) + '</tbody></table>'
     + (t.status === 'PROPOSED' ? '<div class="acts"><button class="go" data-act="accept" data-id="' + t.id + '">Approve and issue transfer</button><button class="no" data-act="reject" data-id="' + t.id + '">Reject</button></div>' : '') + '</div></div>';
 }
 function searchCharts() {
@@ -339,14 +383,14 @@ function searchCharts() {
 // ------------------------------------------------------------------ Forecast & Risk
 function forecastPage() {
   const o = S.overview, rows = o.risks.filter(r => (S.fr.level === 'ALL' || r.riskLevel === S.fr.level) && (!S.fr.medicineId || String(r.medicineId) === String(S.fr.medicineId)));
-  return '<h1>Forecast and stock-out risk</h1><p class="lead">All stock lines in ' + esc(S.district) + ', earliest projected stock-out first.</p>'
+  return '<h1>Forecast and stock-out risk</h1>'
     + panel('Selection', '<div class="pad filters"><label><span>Drug</span><select id="fMed"><option value="">All drugs</option>' + opts(S.meta.medicines, S.fr.medicineId, x => x.name, x => x.id) + '</select></label><label><span>Risk level</span><select id="fLevel">'
       + ['ALL', 'CRITICAL', 'HIGH', 'MODERATE', 'LOW'].map(l => '<option value="' + l + '"' + (S.fr.level === l ? ' selected' : '') + '>' + (l === 'ALL' ? 'All (' + o.risks.length + ')' : RISK[l] + ' (' + o.riskCounts[l] + ')') + '</option>').join('') + '</select></label></div>')
     + panel('Stock lines <span>(' + rows.length + ')</span>', '<div class="scroll"><table><thead><tr><th>Facility</th><th>Drug</th><th class="n">SOH</th><th class="n">AMC</th><th class="n">Forecast<small> /day</small></th><th class="n">Trend</th><th class="n">Days of stock</th><th>Stock-out on</th><th class="n">Prob.<small> 14 d</small></th><th>Stock status</th><th>Risk</th><th>Advice</th><th></th></tr></thead><tbody>'
       + (rows.map(r => '<tr><td>' + esc(r.facilityName) + '</td><td>' + esc(r.medicineName) + '</td><td class="n">' + num(r.currentStock) + '</td><td class="n">' + num(r.avgMonthlyConsumption) + '</td><td class="n">' + one(r.forecastDailyDemand) + '</td><td class="n">' + (r.trendPct > 0 ? '+' : '') + r.trendPct + '%</td><td class="n">' + days(r.daysToStockout)
         + '</td><td>' + dmy(r.stockoutDate) + '</td><td class="n">' + r.stockoutProbabilityPct + '%</td><td>' + st(r.stockStatus) + '</td><td>' + rk(r.riskLevel) + '</td><td>' + esc(r.suggestedAction) + '</td><td><button class="lk" data-act="open" data-med="' + r.medicineId + '" data-fac="' + r.facilityId + '">Open</button></td></tr>').join('') || none(13, 'No stock lines match the selection.'))
       + '</tbody></table></div>')
-    + panel('Expiry watch <span>(batches likely to expire before they are used)</span>', '<div class="scroll"><table><thead><tr><th>Facility</th><th>Drug</th><th>Batch no.</th><th>Expiry date</th><th class="n">Days left</th><th class="n">Batch qty</th><th class="n">Likely to expire</th><th class="n">Value (Rs)</th><th>Advice</th></tr></thead><tbody>'
+    + panel('Expiry watch', '<div class="scroll"><table><thead><tr><th>Facility</th><th>Drug</th><th>Batch no.</th><th>Expiry date</th><th class="n">Days left</th><th class="n">Batch qty</th><th class="n">Likely to expire</th><th class="n">Value (Rs)</th><th>Advice</th></tr></thead><tbody>'
       + (o.expiryAlerts.map(a => '<tr><td>' + esc(a.facilityName) + '</td><td>' + esc(a.medicineName) + '</td><td>' + esc(a.batchNo) + '</td><td>' + dmy(a.expiryDate) + '</td><td class="n">' + a.daysToExpiry + '</td><td class="n">' + num(a.batchQuantity) + '</td><td class="n"><b>' + num(a.unitsLikelyToExpire)
         + '</b></td><td class="n">' + num(a.valueAtRisk) + '</td><td>' + esc(a.action) + '</td></tr>').join('') || none(9, 'No batch is forecast to expire before it is used.')) + '</tbody></table></div>');
 }
@@ -356,7 +400,7 @@ function batchStatus(b, asOf) { const left = Math.round((new Date(b.expiryDate) 
 function inventoryPage() {
   const asOf = S.overview.asOf, list = S.inv.batches.filter(b => b.quantity > 0 && (!S.inv.medicineId || String(b.medicineId) === String(S.inv.medicineId)));
   const usable = sum(list.filter(b => batchStatus(b, asOf) !== 'EXPIRED').map(b => b.quantity)), mo = opts(S.meta.medicines, S.inv.medicineId, x => x.name, x => x.id);
-  return '<h1>Stores and stock ledger</h1><p class="lead">Batch-wise stock at a facility. Enter receipts and issues here; every entry is written to the ledger.</p>'
+  return '<h1>Stores and stock ledger</h1>'
     + panel('Selection', '<div class="pad filters"><label><span>Facility</span><select id="iFac">' + opts(myFacilities(), S.inv.facilityId, f => f.name, f => f.id) + '</select></label><label><span>Drug</span><select id="iMed"><option value="">All drugs</option>' + mo + '</select></label></div>')
     + panel('Batches on hand <span>(' + list.length + ' batches, ' + num(usable) + ' usable units)</span>', '<div class="scroll tall"><table><thead><tr><th>Drug</th><th>Batch no.</th><th class="n">Qty</th><th>Mfg. date</th><th>Expiry date</th><th>Received on</th><th>Status</th></tr></thead><tbody>'
       + (list.map(b => '<tr><td>' + esc((med(b.medicineId) || {}).name || b.medicineId) + '</td><td>' + esc(b.batchNo) + '</td><td class="n">' + num(b.quantity) + '</td><td>' + dmy(b.manufactureDate) + '</td><td>' + dmy(b.expiryDate) + '</td><td>' + dmy(b.receivedDate) + '</td><td>' + tag(batchStatus(b, asOf)) + '</td></tr>').join('') || none(7, 'No batches for this selection.'))
@@ -364,7 +408,7 @@ function inventoryPage() {
     + '<div class="cols c2">' + panel('Receipt entry', '<form class="pad filters" data-form="batch"><label><span>Drug</span><select name="medicineId">' + mo + '</select></label><label><span>Batch no.</span><input type="text" name="batchNo" required></label><label><span>Quantity</span><input type="number" name="quantity" min="1" required></label>'
       + '<label><span>Mfg. date</span><input type="date" name="manufactureDate"></label><label><span>Expiry date</span><input type="date" name="expiryDate" required></label><div class="act"><button class="go">Save receipt</button></div></form>')
     + panel('Issue entry', '<form class="pad filters" data-form="consumption"><label><span>Drug</span><select name="medicineId">' + mo + '</select></label><label><span>Quantity demanded</span><input type="number" name="demanded" min="0" required></label><label><span>Quantity issued</span><input type="number" name="dispensed" min="0" required></label>'
-      + '<div class="act"><button class="go">Save issue</button></div><p class="note" style="grid-column:1/-1">Issues are taken from the earliest-expiring batch first.</p></form>') + '</div>'
+      + '<div class="act"><button class="go">Save issue</button></div></form>') + '</div>'
     + panel('Latest ledger entries for this facility <span id="liveNote"></span>', '<div class="scroll"><table><thead><tr><th>Time</th><th>Facility</th><th>Drug</th><th>Entry</th><th class="n">Qty</th><th class="n">Balance</th></tr></thead><tbody id="liveRows"></tbody></table></div>');
 }
 async function loadBatches() {
@@ -376,7 +420,7 @@ async function loadBatches() {
 // ------------------------------------------------------------------ Transfers & Indents
 function transfersPage() {
   const o = S.overview, pending = o.transfers.filter(t => t.status === 'PROPOSED');
-  return '<h1>Transfers and indents</h1><p class="lead">Facilities forecast to stock out within ' + S.horizon + ' days are topped up to 30 days of stock from the nearest facility with surplus. A donor keeps at least 45 days of its own requirement.</p>'
+  return '<h1>Transfers and indents</h1>'
     + panel('Transfer advice awaiting approval <span>(' + pending.length + ')</span>', '<div class="pad">' + (pending.map(adviceBlock).join('') || '<p>No transfer is advised at present.</p>') + '</div>')
     + panel('Indent advice <span>(' + o.procurement.length + ' due within 3 weeks)</span>', '<div class="scroll"><table><thead><tr><th>Facility</th><th>Drug</th><th class="n">Indent qty</th><th>Indent by</th><th>Expected receipt</th><th class="n">Lead time</th><th class="n">Re-order level</th><th class="n">Safety stock</th><th class="n">Value (Rs)</th><th>Status</th><th>Basis</th></tr></thead><tbody>'
       + (o.procurement.map(r => '<tr><td>' + esc(r.facilityName) + '</td><td>' + esc(r.medicineName) + '</td><td class="n"><b>' + num(r.quantity) + '</b></td><td>' + dmy(r.orderBy) + '</td><td>' + dmy(r.expectedDelivery) + '</td><td class="n">' + r.leadTimeDays + ' d</td><td class="n">' + num(r.reorderPoint) + '</td><td class="n">' + num(r.safetyStock)
@@ -390,7 +434,7 @@ function transfersPage() {
 function facilitiesPage() {
   const list = S.facilities.filter(f => !S.fac.district || f.district === S.fac.district), risk = {};
   S.overview.risks.forEach(r => { if (r.riskLevel === 'CRITICAL' || r.riskLevel === 'HIGH') risk[r.facilityId] = (risk[r.facilityId] || 0) + 1; });
-  return '<h1>Facility master</h1><p class="lead">Hospitals, community health centres and primary health centres on the system.</p>'
+  return '<h1>Facility master</h1>'
     + panel('Facilities <span>(' + list.length + ')</span>', '<div class="scroll"><table><thead><tr><th>Code</th><th>Facility</th><th>Type</th><th>District</th><th class="n">Latitude</th><th class="n">Longitude</th><th class="n">Lines at high or critical risk</th></tr></thead><tbody>'
       + list.map(f => '<tr><td>' + esc(f.code) + '</td><td>' + esc(f.name) + '</td><td>' + esc(f.type) + '</td><td>' + esc(f.district) + '</td><td class="n">' + f.latitude + '</td><td class="n">' + f.longitude + '</td><td class="n">' + (f.district === S.district ? (risk[f.id] || 0) : '-') + '</td></tr>').join('') + '</tbody></table></div>',
       isAdmin() ? '<select id="facDist" style="width:190px"><option value="">All districts</option>' + opts(S.meta.districts, S.fac.district) + '</select>' : '')
@@ -401,7 +445,7 @@ function facilitiesPage() {
 function medicinesPage() {
   const soh = {}, due = {};
   S.overview.risks.forEach(r => { soh[r.medicineId] = (soh[r.medicineId] || 0) + r.currentStock; if (r.atRiskInHorizon) due[r.medicineId] = (due[r.medicineId] || 0) + 1; });
-  return '<h1>Drug master</h1><p class="lead">Essential drug list with unit, supplier lead time and the seasonal disease used in the forecast.</p>'
+  return '<h1>Drug master</h1>'
     + panel('Drugs <span>(' + S.meta.medicines.length + ')</span>', '<div class="scroll"><table><thead><tr><th>Code</th><th>Drug</th><th>Category</th><th>Unit</th><th>Seasonal disease</th><th class="n">Lead time</th><th class="n">Unit rate (Rs)</th><th class="n">SOH, ' + esc(S.district) + '</th><th class="n">Facilities due to stock out</th><th></th></tr></thead><tbody>'
       + S.meta.medicines.map(m => '<tr><td>' + esc(m.code) + '</td><td>' + esc(m.name) + '</td><td>' + esc(m.category) + '</td><td>' + esc(m.unit) + '</td><td>' + esc(m.linkedDisease ? m.linkedDisease.charAt(0) + m.linkedDisease.slice(1).toLowerCase() : '-') + '</td><td class="n">' + m.leadTimeDays + ' d</td><td class="n">' + m.unitCost
         + '</td><td class="n">' + num(soh[m.id]) + '</td><td class="n">' + (due[m.id] || 0) + '</td><td><button class="lk" data-act="open" data-med="' + m.id + '" data-fac="">Open</button></td></tr>').join('') + '</tbody></table></div>')
@@ -414,16 +458,52 @@ function medicinesPage() {
 // ------------------------------------------------------------------ Analytics, Reports, Settings
 function analyticsPage() {
   const a = S.analytics, rc = a.recommendationCounts;
-  return '<h1>Analytics: ' + esc(a.district) + '</h1><p class="lead">Service level, wastage and the outcome of transfer advice.</p>'
+  return '<h1>Analytics: ' + esc(a.district) + '</h1>'
     + '<div class="strip"><div class="k"><b>' + a.fillRate30Pct + '%</b><span>fill rate, 30 days</span></div><div class="k"><b>' + a.fillRate90Pct + '%</b><span>fill rate, 90 days</span></div><div class="o"><b>' + a.stockoutRate30Pct + '%</b><span>line-days short, 30 days</span></div>'
     + '<div><b>' + num(a.unmetUnits30) + '</b><span>units not supplied, 30 days</span></div><div class="o"><b>' + num(a.expiredUnitsOnHand) + '</b><span>expired units on shelf</span></div><div><b>Rs ' + num(a.expiredValue) + '</b><span>value of expired stock</span></div>'
     + '<div class="u"><b>' + num(a.unitsAtExpiryRisk) + '</b><span>units likely to expire</span></div><div><b>' + num(a.unitsRedistributed) + '</b><span>units transferred on advice</span></div></div>'
     + servicePanel() + '<div class="cols c32">' + livePanel()
     + panel('Outcome of transfer advice', '<div class="scroll"><table><thead><tr><th>Status</th><th class="n">Count</th></tr></thead><tbody>' + Object.keys(rc).map(k => '<tr><td>' + tag(k) + '</td><td class="n">' + rc[k] + '</td></tr>').join('')
       + '<tr><td>Approved, of those decided</td><td class="n">' + a.acceptanceRatePct + '%</td></tr></tbody></table></div>') + '</div>'
+    + '<div class="cols c2">' + panel('Effect of transfers issued', '<table class="kv"><tbody><tr><th>Transfers issued</th><td>' + a.transfersExecuted + '</td></tr><tr><th>Units moved</th><td>' + num(a.unitsRedistributed)
+      + '</td></tr><tr><th>Stock days added</th><td>' + one(a.coverDaysAdded) + '</td></tr><tr><th>Units saved from expiry</th><td>' + num(a.expirySavedUnits) + '</td></tr><tr><th>Value saved</th><td>Rs ' + num(a.expirySavedValue)
+      + '</td></tr></tbody></table>') + accuracyPanel() + '</div>'
     + panel('Facility performance <span>(last 30 days)</span>', '<div class="scroll"><table><thead><tr><th>Facility</th><th class="n">Fill rate</th><th class="n">Line-days short</th><th class="n">Lines at high or critical risk</th><th class="n">Units likely to expire</th></tr></thead><tbody>'
       + a.facilities.map(f => '<tr><td>' + esc(f.name) + '</td><td class="n">' + f.fillRatePct + '%</td><td class="n">' + f.stockoutDays + '</td><td class="n">' + f.criticalItems + '</td><td class="n">' + num(f.unitsAtExpiryRisk) + '</td></tr>').join('') + '</tbody></table></div>');
 }
+function accuracyPanel() {
+  const by = {}; S.overview.risks.forEach(r => { if (r.backtestErrorPct >= 0) (by[r.medicineName] = by[r.medicineName] || []).push(r.backtestErrorPct); });
+  const median = v => { const s = v.slice().sort((x, y) => x - y), n = s.length; return n % 2 ? s[(n - 1) / 2] : (s[n / 2 - 1] + s[n / 2]) / 2; };
+  const all = Object.values(by).flat(), top = Math.max(20, ...all);
+  return panel('Forecast accuracy <span>(14-day back-test)</span>', '<div class="scroll"><table><thead><tr><th>Drug</th><th class="n">Lines</th><th>Median error</th><th class="n">Best</th><th class="n">Worst</th></tr></thead><tbody>'
+    + Object.keys(by).map(k => { const v = by[k], md = median(v); return '<tr><td>' + esc(k) + '</td><td class="n">' + v.length + '</td><td><span class="meter"><i style="width:' + Math.min(100, md / top * 100) + '%"></i></span>' + one(md) + '%</td><td class="n">' + one(Math.min(...v)) + '%</td><td class="n">' + one(Math.max(...v)) + '%</td></tr>'; }).join('')
+    + (all.length ? '<tr><td><b>All drugs</b></td><td class="n">' + all.length + '</td><td><b>' + one(median(all)) + '%</b></td><td class="n">' + one(Math.min(...all)) + '%</td><td class="n">' + one(Math.max(...all)) + '%</td></tr>' : none(5, 'Not enough history to back-test.'))
+    + '</tbody></table></div>');
+}
+
+// ------------------------------------------------------------------ Scenario Planning
+function scenarioPage() {
+  const c = S.sc, r = c.result, sign = v => (v > 0 ? '+' : '') + v;
+  let h = '<h1>Scenario planning</h1>';
+  h += panel('Scenario <span>(planning only, nothing is saved)</span>', '<form class="pad filters" data-form="scenario"><label><span>Drug</span><select name="medicineId"><option value="">All drugs</option>' + opts(S.meta.medicines, c.medicineId, x => x.name, x => x.id) + '</select></label>'
+    + '<label><span>Disease</span><select name="disease">' + [['', 'All diseases'], ['DENGUE', 'Dengue'], ['DIARRHOEA', 'Diarrhoea'], ['ARI', 'Respiratory infection'], ['MALARIA', 'Malaria']].map(x => '<option value="' + x[0] + '"' + (c.disease === x[0] ? ' selected' : '') + '>' + x[1] + '</option>').join('') + '</select></label>'
+    + '<label><span>Cases, last 7 days: <b id="scCase">' + sign(c.casePct) + '%</b></span><input type="range" name="casePct" min="-50" max="200" step="10" value="' + c.casePct + '" data-out="scCase"></label>'
+    + '<label><span>Demand: <b id="scDemand">' + sign(c.demandPct) + '%</b></span><input type="range" name="demandPct" min="-30" max="60" step="5" value="' + c.demandPct + '" data-out="scDemand"></label>'
+    + '<div class="act"><button class="go">Run scenario</button></div></form>');
+  if (!r) return h;
+  const rows = [['Stock lines due to stock out in ' + r.horizonDays + ' days', 'linesDueInHorizon'], ['Lines at critical risk', 'critical'], ['Lines at high risk', 'high'], ['Transfers needed', 'transfers'], ['Units to transfer', 'transferUnits'],
+    ['Lines due with no donor in reach', 'linesWithoutDonor'], ['Indents due within 3 weeks', 'reorders'], ['Forecast issues, next 30 days (units)', 'forecastUnits30Days'], ['Units likely to expire unused', 'unitsAtExpiryRisk']];
+  h += '<div class="cols c2">' + panel('Current position against scenario <span>(' + esc(r.district) + ': cases ' + sign(r.casePct) + '%' + (r.disease ? ' for ' + r.disease.toLowerCase() : '') + ', demand ' + sign(r.demandPct) + '%)</span>',
+    '<div class="scroll"><table><thead><tr><th>Measure</th><th class="n">Current</th><th class="n">Scenario</th><th class="n">Change</th></tr></thead><tbody>' + rows.map(x => { const b = r.baseline[x[1]], s = r.scenario[x[1]], d = s - b, good = x[1] === 'unitsAtExpiryRisk' ? d > 0 : d < 0;
+      return '<tr><td>' + x[0] + '</td><td class="n">' + num(b) + '</td><td class="n"><b>' + num(s) + '</b></td><td class="n">' + (d === 0 ? '0' : '<span class="delta ' + (x[1] === 'forecastUnits30Days' ? '' : good ? 'down' : 'up') + '">' + (d > 0 ? '+' : '') + num(d) + '</span>') + '</td></tr>'; }).join('') + '</tbody></table></div>')
+    + panel('Transfers needed under the scenario <span>(' + r.scenarioTransfers.length + ')</span>', '<div class="scroll tall"><table><thead><tr><th>Drug</th><th>From</th><th>To</th><th class="n">Qty</th><th class="n">Distance</th><th>Risk</th></tr></thead><tbody>'
+      + (r.scenarioTransfers.map(t => '<tr><td>' + esc(t.medicineName) + '</td><td>' + esc(t.fromName) + '</td><td>' + esc(t.toName) + '</td><td class="n">' + num(t.quantity) + '</td><td class="n">' + one(t.distanceKm) + ' km</td><td>' + rk(t.urgency) + '</td></tr>').join('') || none(6, 'No transfer would be needed.')) + '</tbody></table></div>') + '</div>';
+  h += panel('Stock lines that change <span>(' + r.changes.length + ')</span>', '<div class="scroll"><table><thead><tr><th>Facility</th><th>Drug</th><th class="n">SOH</th><th class="n">Forecast /day</th><th class="n">Scenario /day</th><th class="n">Days now</th><th class="n">Days in scenario</th><th>Risk now</th><th>Risk in scenario</th><th>Advice in scenario</th></tr></thead><tbody>'
+    + (r.changes.map(x => '<tr><td>' + esc(x.facilityName) + '</td><td>' + esc(x.medicineName) + '</td><td class="n">' + num(x.stock) + '</td><td class="n">' + one(x.baseForecastPerDay) + '</td><td class="n">' + one(x.scenarioForecastPerDay) + '</td><td class="n">' + days(x.baseDays) + '</td><td class="n"><b>' + days(x.scenarioDays)
+      + '</b></td><td>' + rk(x.baseRisk) + '</td><td>' + rk(x.scenarioRisk) + '</td><td>' + esc(x.scenarioAdvice) + '</td></tr>').join('') || none(10, 'No stock line changes risk level or days of stock under this scenario.')) + '</tbody></table></div>');
+  return h;
+}
+
 const REPORTS = {
   risk: ['Stock status and stock-out risk', 'One row per facility and drug.', ['Facility', 'Drug', 'Unit', 'SOH', 'AMC', 'MOS', 'Forecast per day', 'Trend %', 'Days of stock', 'Stock-out date', 'Probability % (14 days)', 'Stock status', 'Risk level', 'Advice'],
     () => S.overview.risks.map(r => [r.facilityName, r.medicineName, r.unit, r.currentStock, r.avgMonthlyConsumption, r.monthsOfStock ?? '', r.forecastDailyDemand, r.trendPct, r.daysToStockout ?? '180+', r.stockoutDate ?? '', r.stockoutProbabilityPct, STATUS[r.stockStatus], r.riskLevel, r.suggestedAction])],
@@ -439,7 +519,7 @@ const REPORTS = {
     () => S.analytics.days.map(d => [d.date, d.fillRatePct, d.linesShort, d.issuedUnits, d.unmetUnits])]
 };
 function reportsPage() {
-  return '<h1>Reports</h1><p class="lead">Current position for ' + esc(S.district) + '. CSV files open in Excel.</p>' + panel('Available reports', '<div class="scroll"><table><thead><tr><th>Report</th><th>Contents</th><th class="n">Rows</th><th></th></tr></thead><tbody>'
+  return '<h1>Reports</h1>' + panel('Available reports', '<div class="scroll"><table><thead><tr><th>Report</th><th>Contents</th><th class="n">Rows</th><th></th></tr></thead><tbody>'
     + Object.keys(REPORTS).map(k => '<tr><td>' + REPORTS[k][0] + '</td><td>' + REPORTS[k][1] + '</td><td class="n">' + REPORTS[k][3]().length + '</td><td><button data-act="csv" data-id="' + k + '">Download CSV</button></td></tr>').join('')
     + '</tbody></table></div><div class="pad"><button data-act="print">Print this page</button></div>');
 }
@@ -452,19 +532,18 @@ function downloadCsv(key) {
 }
 function settingsPage() {
   const b = S.meta.riskBands, hl = S.health, s = S.session, up = v => v ? '<span class="st ' + (v === 'UP' ? 'ADEQUATE' : 'STOCKED_OUT') + '"><i></i>' + esc(v) + '</span>' : 'checking';
-  return '<h1>Settings</h1><p class="lead">Session, service status and the rules used in the analysis.</p><div class="cols c2">'
+  return '<h1>Settings</h1><div class="cols c2">'
     + panel('Session', '<table class="kv"><tbody><tr><th>User</th><td>' + esc(s.displayName) + ' (' + esc(s.username) + ')</td></tr><tr><th>Office</th><td>' + esc(s.designation) + '</td></tr><tr><th>Access</th><td>' + (isAdmin() ? 'All districts' : esc(s.homeDistrict) + ' district') + '</td></tr><tr><th>Signed in</th><td>'
       + stamp(s.signedInAt) + '</td></tr><tr><th>Session ends</th><td>' + stamp(s.expiresAt) + '</td></tr></tbody></table><form class="pad filters" data-form="settings"><label><span>Risk horizon (days)</span><input type="number" name="horizon" min="3" max="60" value="' + S.horizon + '" required></label><div class="act"><button class="go">Save</button></div></form>')
     + panel('Services', '<table class="kv"><tbody><tr><th>forecast-service (8082)</th><td>' + up(hl && hl.forecastService) + '</td></tr><tr><th>inventory-service (8081)</th><td>' + up(hl && hl.inventoryService) + '</td></tr><tr><th>Dispensing feed</th><td>'
       + (S.live && S.live.feedEnabled ? 'Simulated, ' + S.live.feedSpeed + 'x real time' : 'Off') + '</td></tr><tr><th>Consumption history used</th><td>' + S.overview.retrieval.historyDays + ' days</td></tr></tbody></table><div class="pad"><button data-act="health">Check again</button></div>') + '</div>'
     + panel('Analysis rules', '<div class="scroll"><table><thead><tr><th>Rule</th><th>Value</th></tr></thead><tbody>' + [
-      ['Stock status', 'Stocked out: SOH is zero. Understocked: under ' + b.MIN_STOCK_DAYS + ' days of stock. Adequately stocked: ' + b.MIN_STOCK_DAYS + ' to ' + b.MAX_STOCK_DAYS + ' days. Overstocked: over ' + b.MAX_STOCK_DAYS + ' days.'],
-      ['Stock-out risk', 'Critical: ' + b.CRITICAL + ' days of stock or less. High: up to ' + b.HIGH + ' days. Moderate: up to ' + b.MODERATE + ' days. Low: more than ' + b.MODERATE + ' days.'],
-      ['Demand forecast', 'Damped-trend Holt exponential smoothing with weekday pattern, fitted per stock line; adjusted for district disease case trend.'],
-      ['Days of stock', 'Day-by-day simulation, earliest-expiring batch issued first, expired batches written off.'],
-      ['Transfer advice', 'Receiver topped up to 30 days; donor keeps 45 days; batches with under 21 days shelf life are not moved; 120 km limit.'],
-      ['Indent advice', 'Re-order level = lead-time demand + safety stock (95% service level). Indent covers lead time plus 30 days.'],
-      ['Near expiry', 'Batch expiring in 90 days or less.']].map(r => '<tr><td>' + r[0] + '</td><td>' + r[1] + '</td></tr>').join('') + '</tbody></table></div>');
+      ['Stock status', 'Out: SOH 0. Under: below ' + b.MIN_STOCK_DAYS + ' days. Adequate: ' + b.MIN_STOCK_DAYS + ' to ' + b.MAX_STOCK_DAYS + ' days. Over: above ' + b.MAX_STOCK_DAYS + ' days.'],
+      ['Stock-out risk', 'Critical: up to ' + b.CRITICAL + ' days. High: up to ' + b.HIGH + '. Moderate: up to ' + b.MODERATE + '. Low: above ' + b.MODERATE + '.'],
+      ['Forecast', 'Damped-trend exponential smoothing with weekday pattern and disease case trend.'],
+      ['Transfer', 'Receiver to 30 days. Donor keeps 45 days. Minimum shelf life 21 days. 120 km limit.'],
+      ['Indent', 'Re-order level = lead-time demand + safety stock (95% service level).'],
+      ['Near expiry', '90 days or less.']].map(r => '<tr><td>' + r[0] + '</td><td>' + r[1] + '</td></tr>').join('') + '</tbody></table></div>');
 }
 
 // ------------------------------------------------------------------ events
@@ -484,7 +563,7 @@ async function enter() {
   render(); if ($('main')) $('main').scrollTop = 0;
 }
 async function changeDistrict(value) {
-  S.district = value; S.search.facilityId = ''; S.search.data = null; S.inv.facilityId = null; S.ask.result = null; S.overview = null; render();
+  S.district = value; S.sc.result = null; S.search.facilityId = ''; S.search.data = null; S.inv.facilityId = null; S.ask.result = null; S.overview = null; render();
   await busy(async () => { await refreshAll(); if (route() === 'inventory') await loadBatches(); });
 }
 document.addEventListener('click', e => {
@@ -495,7 +574,9 @@ document.addEventListener('click', e => {
   else if (act === 'pick') { S.search.facilityId = id; render(); }
   else if (act === 'tab') { S.search.tab = id; render(); }
   else if (act === 'open') { S.search.medicineId = +el.dataset.med; S.search.facilityId = el.dataset.fac; busy(loadSearch).then(() => { location.hash = '#/search'; }); }
-  else if (act === 'accept' || act === 'reject') { el.disabled = true; busy(async () => { await post('/api/recommendations/' + id + '/' + act); await refreshAll(); S.history = await api('/api/recommendations'); }, act === 'accept' ? 'Transfer issued. Stock moved between facilities.' : 'Transfer advice rejected.'); }
+  else if (act === 'accept' || act === 'reject') { el.disabled = true; let done = null;
+    busy(async () => { const t = await post('/api/recommendations/' + id + '/' + act); done = 'Transfer advice rejected.'; if (act === 'accept') done = 'Transfer issued: ' + num(t.quantity) + ' ' + t.unit + ' moved, ' + one(t.coverDaysGained) + ' days of stock added'
+      + (t.expirySavedUnits ? ', ' + num(t.expirySavedUnits) + ' saved from expiry' : '') + '.'; await refreshAll(); S.history = await api('/api/recommendations'); }).then(() => { if (done) toast(done); }); }
   else if (act === 'csv') downloadCsv(id);
   else if (act === 'print') window.print();
   else if (act === 'health') enter();
@@ -514,13 +595,16 @@ document.addEventListener('submit', e => {
   const form = e.target.closest('[data-form]'); if (!form) return;
   e.preventDefault();
   const v = Object.fromEntries(new FormData(form).entries()), kind = form.dataset.form;
-  if (kind === 'ask') { S.ask.text = v.q; busy(async () => { S.ask.result = await post('/api/query', {query: v.q, district: S.district}); const dist = S.ask.result.interpreted.district; if (dist !== S.district) S.district = dist; await refreshAll(); }); }
+  if (kind === 'scenario') { Object.assign(S.sc, {medicineId: v.medicineId, disease: v.disease, casePct: +v.casePct, demandPct: +v.demandPct});
+    busy(async () => { S.sc.result = await api('/api/scenario?' + qs({district: S.district, medicineId: v.medicineId, horizonDays: S.horizon, casePct: v.casePct, demandPct: v.demandPct, disease: v.disease})); }); }
+  else if (kind === 'ask') { S.ask.text = v.q; busy(async () => { S.ask.result = await post('/api/query', {query: v.q, district: S.district}); const dist = S.ask.result.interpreted.district; if (dist !== S.district) S.district = dist; await refreshAll(); }); }
   else if (kind === 'settings') { S.horizon = Math.max(3, Math.min(60, +v.horizon || 10)); store.set('mc.horizon', S.horizon); busy(refreshAll, 'Saved.'); }
   else if (kind === 'facility') busy(async () => { await post('/api/inventory/facilities', {code: v.code.trim(), name: v.name.trim(), type: v.type, district: v.district.trim(), latitude: +v.latitude, longitude: +v.longitude}); await loadMeta(); await refreshAll(); }, 'Facility added.');
   else if (kind === 'medicine') busy(async () => { await post('/api/inventory/medicines', {code: v.code.trim().toUpperCase(), name: v.name.trim(), category: v.category.trim(), unit: v.unit.trim(), aliases: v.name.trim().split(' ')[0].toLowerCase(), linkedDisease: v.linkedDisease || null, leadTimeDays: +v.leadTimeDays, unitCost: +v.unitCost}); await loadMeta(); await refreshAll(); }, 'Drug added.');
   else if (kind === 'batch') busy(async () => { await post('/api/inventory/batches', {facilityId: +S.inv.facilityId, medicineId: +v.medicineId, batchNo: v.batchNo, quantity: +v.quantity, manufactureDate: v.manufactureDate || null, expiryDate: v.expiryDate}); await loadBatches(); await refreshAll(); }, 'Receipt saved.');
   else if (kind === 'consumption') busy(async () => { await post('/api/inventory/consumption', {facilityId: +S.inv.facilityId, medicineId: +v.medicineId, demanded: +v.demanded, dispensed: +v.dispensed}); await loadBatches(); await refreshAll(); }, 'Issue saved.');
 });
+document.addEventListener('input', e => { const out = e.target.dataset && e.target.dataset.out; if (out && $(out)) $(out).textContent = (e.target.value > 0 ? '+' : '') + e.target.value + '%'; });
 window.addEventListener('hashchange', enter);
 window.addEventListener('resize', () => { if (S.session && S.overview) render(); });
 

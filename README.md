@@ -73,13 +73,14 @@ End-to-end flow:
 
 | Group | Screen | Contents |
 |---|---|---|
-| Monitoring | Dashboard | Status counts, query, stock status by drug, projected stock-outs, live stock movement, fill-rate charts |
-| | Stock Status | One drug across the district: SOH, AMC, MOS, forecast, days of stock, status, risk; per-facility batches, consumption, forecast, risk basis; transfer advice |
+| Monitoring | Dashboard | Status counts, query, stock status by drug, projected stock-outs, facility map with pending transfers, live stock movement, fill-rate charts |
+| | Stock Status | One drug across the district: SOH, AMC, MOS, forecast, days of stock, status, risk; per-facility batches, consumption and forecast; facility map; transfer advice |
 | | Forecast & Risk | Every stock line, plus the expiry watch |
+| | Scenario Planning | What-if: change disease cases or demand and compare stock-outs, transfers and indents with the current position |
 | Stores | Stores & Ledger | Batches at a facility, receipt entry, issue entry, latest ledger entries |
 | | Transfers & Indents | Transfer advice to approve or reject, indent advice, transfer register |
 | Masters | Facilities, Drug Master | Lists and add forms (state administrator only) |
-| Reports | Analytics | Fill rate, shortages, wastage, outcome of transfer advice |
+| Reports | Analytics | Fill rate, shortages, wastage, outcome and effect of transfer advice, forecast accuracy by drug |
 | | Reports | CSV downloads |
 | Administration | Settings | Session, service status, analysis rules |
 
@@ -128,7 +129,14 @@ medichain.live-feed.interval-ms=5000
 | Transfer advice | Deficit = 30 days of forecast demand minus stock. Surplus = stock beyond 45 days of own demand, or stock that would expire. Most urgent deficit first; prefer one donor that covers the need, then stock that would otherwise expire, then the nearest (haversine). Batches under 21 days shelf life are not moved. 120 km limit. |
 | Indent advice | Re-order level = lead-time demand + safety stock (1.65 x daily error x sqrt(lead time)); indent up to lead time + 30 days, in packs of 100. |
 
+| Scenario | The same analysis run twice: once on the data as it is, once with the last 7 days of disease cases and/or forecast demand scaled. |
+| Effect of a transfer | Days of stock gained by the receiver, and units shipped from batches the donor would not have used before expiry. |
+
 No language model is called. Every figure comes from these calculations.
+
+The facility map is drawn in the browser as SVG from each facility's latitude and longitude (no
+map tiles, so it works offline). Dots are coloured by stock-out risk or stock status; dashed
+arrows are transfers awaiting approval.
 
 ## REST API
 
@@ -153,6 +161,7 @@ forecast-service (8082), used by the web client; all but the first three need a 
 | GET | `/api/health` | service status |
 | GET, POST | `/api/auth/me`, `/api/auth/logout` | current session; sign out |
 | GET | `/api/analysis?district=&medicineId=&horizonDays=` | stock status, risk, forecast, advice |
+| GET | `/api/scenario?district=&casePct=&demandPct=&disease=&medicineId=` | what-if comparison; nothing is saved |
 | POST | `/api/query` | typed question, body `{"query": "...", "district": "Vellore"}` |
 | GET | `/api/recommendations` | transfer register |
 | POST | `/api/recommendations/{id}/accept`, `/reject` | decide a transfer |
@@ -183,9 +192,10 @@ a fixed, unscripted mix. To add a district, add `new Facility(...)` lines to
 1. Sign in as `admin` for Vellore. Point at the status strip and the live stock movement panel.
 2. Run the query on the Dashboard: query, retrieve, analyse, recommend, explain.
 3. Stock Status, Paracetamol: Government Hospital Vellore is Critical. Open Batches, Consumption,
-   Forecast, Risk basis.
+   Forecast. The map shows the transfer arrow from PHC Katpadi.
 4. Approve the transfer from PHC Katpadi. The table reruns; the ledger shows transfer out and in.
 5. Stores & Ledger: save a receipt or an issue and watch the balance change.
-6. Analytics and Reports: fill rate by day, outcome of advice, CSV download.
-7. Sign out, sign in as `dp.salem`: one district only, no master-data forms.
-8. Show the two H2 consoles.
+6. Scenario Planning: dengue cases +100%. Stock-out dates move earlier and more stock is needed.
+7. Analytics and Reports: effect of the transfer, forecast accuracy, fill rate by day, CSV download.
+8. Sign out, sign in as `dp.salem`: one district only, no master-data forms.
+9. Show the two H2 consoles.

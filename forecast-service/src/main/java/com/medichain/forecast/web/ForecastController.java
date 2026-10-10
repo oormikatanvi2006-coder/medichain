@@ -7,6 +7,7 @@ import com.medichain.forecast.web.ApiModels.Analytics;
 import com.medichain.forecast.web.ApiModels.Meta;
 import com.medichain.forecast.web.ApiModels.QueryRequest;
 import com.medichain.forecast.web.ApiModels.QueryResponse;
+import com.medichain.forecast.web.ApiModels.ScenarioResult;
 import com.medichain.forecast.web.ApiModels.TransferView;
 import java.util.List;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -57,6 +58,17 @@ public class ForecastController {
                                   @RequestParam(name = "medicineId", required = false) Long medicineId,
                                   @RequestParam(name = "horizonDays", required = false) Integer horizonDays) {
         return queries.analyse(district, medicineId, horizonDays);
+    }
+
+    /** What-if comparison: current position against one with disease cases and demand changed. */
+    @GetMapping("/scenario")
+    public ScenarioResult scenario(@RequestParam(name = "district", required = false) String district,
+                                   @RequestParam(name = "medicineId", required = false) Long medicineId,
+                                   @RequestParam(name = "horizonDays", required = false) Integer horizonDays,
+                                   @RequestParam(name = "casePct", defaultValue = "0") double casePct,
+                                   @RequestParam(name = "demandPct", defaultValue = "0") double demandPct,
+                                   @RequestParam(name = "disease", required = false) String disease) {
+        return queries.scenario(district, medicineId, horizonDays, casePct, demandPct, disease);
     }
 
     @GetMapping("/recommendations")

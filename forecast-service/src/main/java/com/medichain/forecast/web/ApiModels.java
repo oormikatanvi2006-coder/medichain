@@ -5,6 +5,7 @@ import com.medichain.forecast.engine.Results.ExpiryAlert;
 import com.medichain.forecast.engine.Results.Reorder;
 import com.medichain.forecast.engine.Results.Retrieval;
 import com.medichain.forecast.engine.Results.RiskRow;
+import com.medichain.forecast.engine.Results.Transfer;
 import com.medichain.forecast.model.Recommendation;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -33,7 +34,8 @@ public final class ApiModels {
                                double distanceKm,
                                double receiverDaysBefore, double receiverDaysAfter, double donorDaysBefore,
                                double donorDaysAfter, String urgency, String rationale, List<String> keyFactors,
-                               List<String> batches, LocalDateTime createdAt, LocalDateTime decidedAt) {
+                               List<String> batches, LocalDateTime createdAt, LocalDateTime decidedAt,
+                               int expirySavedUnits, double expirySavedValue, double coverDaysGained) {
 
         public static TransferView of(Recommendation r) {
             return new TransferView(r.getId(), r.getStatus(), r.getDistrict(), r.getMedicineId(),
@@ -42,7 +44,8 @@ public final class ApiModels {
                     r.getFromStockAfter(), r.getToStockBefore(), r.getToStockAfter(), r.getDistanceKm(),
                     r.getReceiverDaysBefore(), r.getReceiverDaysAfter(), r.getDonorDaysBefore(),
                     r.getDonorDaysAfter(), r.getUrgency(), r.getRationale(), lines(r.getKeyFactors()),
-                    lines(r.getBatches()), r.getCreatedAt(), r.getDecidedAt());
+                    lines(r.getBatches()), r.getCreatedAt(), r.getDecidedAt(), r.getExpirySavedUnits(),
+                    r.getExpirySavedValue(), r.getCoverDaysGained());
         }
 
         private static List<String> lines(String text) {
@@ -55,6 +58,22 @@ public final class ApiModels {
                                 Map<String, Integer> riskCounts, List<RiskRow> risks, List<TransferView> transfers,
                                 List<Reorder> procurement, List<ExpiryAlert> expiryAlerts,
                                 Map<String, List<Integer>> caseTrends) {
+    }
+
+    /** Headline figures of one analysis run, for comparing a scenario with the current position. */
+    public record ScenarioSummary(int linesDueInHorizon, int critical, int high, int transfers, int transferUnits,
+                                  int linesWithoutDonor, int reorders, int unitsAtExpiryRisk,
+                                  long forecastUnits30Days) {
+    }
+
+    public record ScenarioChange(String facilityName, String medicineName, String unit, int stock,
+                                 double baseForecastPerDay, double scenarioForecastPerDay, Double baseDays,
+                                 Double scenarioDays, String baseRisk, String scenarioRisk, String scenarioAdvice) {
+    }
+
+    public record ScenarioResult(String district, int horizonDays, double casePct, double demandPct, String disease,
+                                 ScenarioSummary baseline, ScenarioSummary scenario, List<ScenarioChange> changes,
+                                 List<Transfer> scenarioTransfers) {
     }
 
     public record Meta(String stateName, List<String> districts, String defaultDistrict, int defaultHorizonDays,
@@ -77,6 +96,7 @@ public final class ApiModels {
                             double valueAtExpiryRisk, Map<String, Integer> riskCounts,
                             Map<String, Integer> recommendationCounts, int unitsRedistributed,
                             double acceptanceRatePct, List<FacilityStats> facilities, List<WeekStats> weeks,
-                            List<DayStats> days) {
+                            List<DayStats> days, int transfersExecuted, int expirySavedUnits,
+                            double expirySavedValue, double coverDaysAdded) {
     }
 }

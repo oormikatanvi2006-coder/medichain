@@ -40,6 +40,11 @@ public class Recommendation {
     private double receiverDaysAfter;
     private double donorDaysBefore;
     private double donorDaysAfter;
+    /** Units that would have expired at the donor and are put to use by this transfer. */
+    private int expirySavedUnits;
+    private double expirySavedValue;
+    /** Days of stock the receiver gains. */
+    private double coverDaysGained;
     private String urgency;
     @Column(length = 1000)
     private String rationale;
@@ -98,6 +103,12 @@ public class Recommendation {
     public void setDonorDaysBefore(double donorDaysBefore) { this.donorDaysBefore = donorDaysBefore; }
     public double getDonorDaysAfter() { return donorDaysAfter; }
     public void setDonorDaysAfter(double donorDaysAfter) { this.donorDaysAfter = donorDaysAfter; }
+    public int getExpirySavedUnits() { return expirySavedUnits; }
+    public void setExpirySavedUnits(int expirySavedUnits) { this.expirySavedUnits = expirySavedUnits; }
+    public double getExpirySavedValue() { return expirySavedValue; }
+    public void setExpirySavedValue(double expirySavedValue) { this.expirySavedValue = expirySavedValue; }
+    public double getCoverDaysGained() { return coverDaysGained; }
+    public void setCoverDaysGained(double coverDaysGained) { this.coverDaysGained = coverDaysGained; }
     public String getUrgency() { return urgency; }
     public void setUrgency(String urgency) { this.urgency = urgency; }
     public String getRationale() { return rationale; }

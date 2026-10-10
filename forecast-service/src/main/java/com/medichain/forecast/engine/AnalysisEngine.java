@@ -79,6 +79,7 @@ public final class AnalysisEngine {
         double days = Double.POSITIVE_INFINITY;
         int[] waste;
         int projectedWaste;
+        int wasteLeft;
         int need;
         int unmet;
         int surplus;
@@ -89,6 +90,11 @@ public final class AnalysisEngine {
     }
 
     public Analysis analyse(Snapshot snap, Set<Long> medicineIds, int horizonDays) {
+        return analyse(snap, medicineIds, horizonDays, Scenario.NONE);
+    }
+
+    /** Runs the analysis with a what-if scenario applied to disease cases and demand. */
+    public Analysis analyse(Snapshot snap, Set<Long> medicineIds, int horizonDays, Scenario scenario) {
         LocalDate asOf = snap.asOf();
         int horizon = Math.max(1, Math.min(horizonDays, 90));
 
@@ -101,7 +107,14 @@ public final class AnalysisEngine {
         Map<String, List<Integer>> caseTrends = new LinkedHashMap<>();
         for (CaseSeries c : snap.caseTrends()) {
             caseTrends.put(c.disease(), c.dailyCases());
-            signals.put(c.disease(), CaseSignal.of(c.disease(), c.dailyCases()));
+            List<Integer> series = c.dailyCases();
+            if (scenario.caseFactor() != 1.0 && scenario.appliesTo(c.disease())) {
+                series = new ArrayList<>(series);
+                for (int i = Math.max(0, series.size() - 7); i < series.size(); i++) {
+                    series.set(i, (int) Math.round(series.get(i) * scenario.caseFactor()));
+                }
+            }
+            signals.put(c.disease(), CaseSignal.of(c.disease(), series));
             caseRecords += c.dailyCases().size();
         }
 
@@ -131,7 +144,8 @@ public final class AnalysisEngine {
             if (m.linkedDisease() != null && signals.containsKey(m.linkedDisease())) {
                 l.signal = signals.get(m.linkedDisease());
             }
-            l.forecast = DemandForecaster.forecast(l.history, asOf, SIM_DAYS, l.signal.uplift());
+            l.forecast = DemandForecaster.forecast(l.history, asOf, SIM_DAYS,
+                    l.signal.uplift() * scenario.demandFactor());
             simulate(l, asOf);
             lines.add(l);
             byMedicine.computeIfAbsent(m.id(), k -> new ArrayList<>()).add(l);
@@ -271,7 +285,7 @@ public final class AnalysisEngine {
             }
             d.unmet = d.need;
             if (d.inbound == 0) {
-                d.action = "No surplus within " + (int) MAX_DISTANCE_KM + " km: raise an emergency order";
+                d.action = "No donor within " + (int) MAX_DISTANCE_KM + " km. Emergency indent.";
             }
         }
         return out;
@@ -284,6 +298,11 @@ public final class AnalysisEngine {
         double receiverBefore = Math.min(d.days, SIM_DAYS);
         double receiverCoverSoFar = d.inbound == 0 ? receiverBefore : coverDays(d.stock + d.inbound, d);
         int surplusBefore = s.surplus;
+        if (s.outbound == 0) {
+            s.wasteLeft = s.projectedWaste;
+        }
+        int expirySaved = Math.min(qty, s.wasteLeft);
+        s.wasteLeft -= expirySaved;
 
         // Ship the earliest-expiring batches that still have enough shelf life.
         List<String> batches = new ArrayList<>();
@@ -297,7 +316,7 @@ public final class AnalysisEngine {
             BatchDto b = s.usable.get(i);
             s.shippable[i] -= take;
             open -= take;
-            batches.add(b.batchNo() + " x " + qty(take) + " (expires " + b.expiryDate().format(DAY_YEAR) + ")");
+            batches.add(b.batchNo() + " x " + qty(take) + ", exp " + b.expiryDate().format(DAY_YEAR));
             if (earliestExpiry == null) {
                 earliestExpiry = b.expiryDate();
             }
@@ -310,51 +329,41 @@ public final class AnalysisEngine {
 
         String med = d.medicine.name();
         String unit = d.medicine.unit();
-        String rationale = d.facility.name() + " will stock out of " + med + " in " + f1(d.days) + " days (around "
-                + asOf.plusDays((long) Math.floor(d.days)).format(DAY) + "). Transfer " + qty(qty) + " " + unit
-                + " from " + s.facility.name() + ", " + f0(km) + " km away, which holds " + f0(donorBefore)
-                + " days of cover. " + d.facility.name() + " rises to " + f0(receiverAfter) + " days of cover; "
-                + s.facility.name() + " keeps " + f0(donorAfter) + " days.";
+        String rationale = d.facility.name() + ": " + med + " out in " + f1(d.days) + " days. Transfer " + qty(qty) + " "
+                + unit + " from " + s.facility.name() + " (" + f0(km) + " km).";
 
+        // Short "label: value" pairs; the web client shows them as a table.
         List<String> factors = new ArrayList<>();
-        factors.add("Remaining stock at " + d.facility.name() + ": " + qty(d.stock) + " " + unit + " = "
-                + f1(d.days) + " days at forecast demand of " + f1(average(d, 10)) + "/day");
-        factors.add("Consumption trend at " + d.facility.name() + ": " + signed(d.forecast.trendPct())
-                + "% over the last 14 days vs the 14 before");
+        factors.add("Receiver stock: " + qty(d.stock) + " " + unit + " (" + f1(d.days) + " days)");
+        factors.add("Forecast demand: " + f1(average(d, 10)) + "/day");
+        factors.add("14-day trend: " + signed(d.forecast.trendPct()) + "%");
         if (d.signal.disease() != null) {
-            factors.add("Seasonal signal: " + d.signal.disease().toLowerCase(Locale.ROOT) + " cases "
-                    + signed(d.signal.momentumPct()) + "% vs 3-week baseline, forecast uplift "
-                    + signed((d.signal.uplift() - 1) * 100) + "%");
+            factors.add(cap(d.signal.disease()) + " cases, 7 days: " + signed(d.signal.momentumPct()) + "%");
         }
-        factors.add("Surplus at " + s.facility.name() + ": " + qty(surplusBefore) + " " + unit + " beyond its own "
-                + DONOR_KEEP_DAYS + "-day need (" + qty(s.stock) + " on hand)");
+        factors.add("Donor surplus: " + qty(surplusBefore) + " of " + qty(s.stock) + " " + unit);
         if (s.projectedWaste > 0) {
-            factors.add("Expiry: " + qty(s.projectedWaste) + " " + unit + " at " + s.facility.name()
-                    + " would expire unused; this transfer puts them to use");
+            factors.add("Donor expiry risk: " + qty(s.projectedWaste) + " " + unit);
         }
         if (earliestExpiry != null) {
             long shelf = ChronoUnit.DAYS.between(asOf, earliestExpiry);
-            factors.add("Shipped stock expires from " + earliestExpiry.format(DAY_YEAR) + " (" + shelf
-                    + " days away)" + (shelf < receiverAfter
-                    ? "; dispense this batch first, it is shorter than the " + f0(receiverAfter) + " days of cover"
-                    : "; " + d.facility.name() + " will use it well before then"));
+            factors.add("Earliest expiry shipped: " + earliestExpiry.format(DAY_YEAR)
+                    + (shelf < receiverAfter ? " (issue first)" : ""));
         }
-        factors.add("Distance: " + f0(km) + " km straight-line; " + (s.projectedWaste > 0
-                ? "chosen because its stock would otherwise expire"
-                : "nearest facility with enough spare stock"));
-        if (d.inbound > qty) {
-            factors.add("Combined with an earlier transfer; cover before this one was " + f0(receiverCoverSoFar) + " days");
+        factors.add("Stock days gained: " + f1(Math.max(0, receiverAfter - receiverCoverSoFar)));
+        if (expirySaved > 0) {
+            factors.add("Saved from expiry: " + qty(expirySaved) + " " + unit);
         }
 
         String label = "Transfer " + qty(qty) + " " + unit + " from " + s.facility.name() + " (" + f0(km) + " km)";
         d.action = d.action == null ? label : d.action + "; " + label;
-        s.action = "Send " + qty(s.outbound) + " " + unit + " of surplus to deficit facilities";
+        s.action = "Donor: " + qty(s.outbound) + " " + unit + " out";
 
         return new Transfer(d.medicine.id(), med, unit, s.facility.id(), s.facility.code(), s.facility.name(),
                 d.facility.id(), d.facility.code(), d.facility.name(), qty, fromStockBefore,
                 fromStockBefore - qty, toStockBefore, toStockBefore + qty, round1(km), round1(receiverBefore),
                 round1(receiverAfter), round1(donorBefore), round1(donorAfter), riskLevel(d.days), rationale,
-                factors, batches);
+                factors, batches, expirySaved, Math.round(expirySaved * d.medicine.unitCost()),
+                round1(Math.max(0, receiverAfter - receiverCoverSoFar)));
     }
 
     // ------------------------------------------------------------------ procurement
@@ -391,29 +400,20 @@ public final class AnalysisEngine {
 
         String rationale;
         if ("URGENT".equals(status)) {
-            rationale = "Stock" + (l.inbound > 0 ? " (after incoming transfers)" : "") + " covers " + f1(cover)
-                    + " days but supply takes " + lead + " days: order " + qty(quantity) + " " + unit
-                    + " today and expedite delivery.";
+            rationale = "Stock " + f1(cover) + " days, lead time " + lead + " days. Indent today, expedite.";
         } else if ("ORDER_NOW".equals(status)) {
-            rationale = "Stock position of " + qty((int) position) + " " + unit + " is at or below the reorder point of "
-                    + qty(rop) + ": order " + qty(quantity) + " " + unit + " today.";
+            rationale = "At re-order level (" + qty(rop) + "). Indent today.";
         } else {
-            rationale = "Stock reaches the reorder point of " + qty(rop) + " " + unit + " in " + orderIn
-                    + " days: order " + qty(quantity) + " " + unit + " by " + orderBy.format(DAY) + ".";
+            rationale = "Re-order level (" + qty(rop) + ") reached in " + orderIn + " days.";
         }
 
         List<String> factors = new ArrayList<>();
-        factors.add("Stock position: " + qty((int) position) + " " + unit + " (on hand " + qty(l.stock)
-                + (l.inbound > 0 ? ", incoming transfers " + qty(l.inbound) : "")
-                + (l.outbound > 0 ? ", outgoing transfers " + qty(l.outbound) : "") + ") = " + f1(cover) + " days");
-        factors.add("Supplier lead time: " + lead + " days, forecast demand in that time "
-                + qty((int) Math.round(cumulative(l, lead))) + " " + unit);
-        factors.add("Safety stock: " + qty((int) Math.round(safety)) + " " + unit
-                + " (95% service level, daily forecast error " + f1(l.forecast.sigma()) + ")");
-        factors.add("Order covers lead time + " + REVIEW_PERIOD_DAYS + "-day review period, rounded to packs of "
-                + PACK_SIZE);
+        factors.add("Stock position: " + qty((int) position) + " " + unit + " (" + f1(cover) + " days)");
+        factors.add("Lead time: " + lead + " days");
+        factors.add("Lead-time demand: " + qty((int) Math.round(cumulative(l, lead))) + " " + unit);
+        factors.add("Safety stock: " + qty((int) Math.round(safety)) + " " + unit);
         if (l.unmet > 0) {
-            factors.add("Transfers could not cover " + qty(l.unmet) + " " + unit + " of the shortfall");
+            factors.add("Not covered by transfer: " + qty(l.unmet) + " " + unit);
         }
 
         return new Reorder(l.facility.id(), l.facility.code(), l.facility.name(), l.medicine.id(),
@@ -432,11 +432,9 @@ public final class AnalysisEngine {
             }
             BatchDto b = l.usable.get(i);
             int daysLeft = (int) ChronoUnit.DAYS.between(asOf, b.expiryDate());
-            String action = l.outbound > 0
-                    ? qty(l.outbound) + " " + l.medicine.unit() + " recommended for transfer to deficit facilities"
-                    : daysLeft < MIN_SHELF_LIFE_DAYS
-                    ? "Too close to expiry to ship: dispense first"
-                    : "Not needed for current shortages: dispense first and offer to neighbouring facilities";
+            String action = l.outbound > 0 ? "Transfer advised"
+                    : daysLeft < MIN_SHELF_LIFE_DAYS ? "Issue first; too near expiry to move"
+                    : "Issue first; offer to nearby facilities";
             out.add(new ExpiryAlert(l.facility.id(), l.facility.code(), l.facility.name(), l.medicine.id(),
                     l.medicine.name(), l.medicine.unit(), b.batchNo(), b.expiryDate(), daysLeft, b.quantity(),
                     l.waste[i], Math.round(l.waste[i] * l.medicine.unitCost()), action));
@@ -454,28 +452,22 @@ public final class AnalysisEngine {
         double avg = average(l, horizon);
 
         List<String> factors = new ArrayList<>();
-        factors.add("Stock on hand: " + qty(l.stock) + " " + unit + " in " + l.usable.size() + " batch"
+        factors.add("Stock on hand: " + qty(l.stock) + " " + unit + ", " + l.usable.size() + " batch"
                 + (l.usable.size() == 1 ? "" : "es"));
-        factors.add("Forecast demand: " + f1(avg) + "/day over the next " + horizon + " days (last 14 days averaged "
-                + f1(l.forecast.recentAvg()) + "/day)");
-        factors.add("Consumption trend: " + signed(l.forecast.trendPct()) + "% vs the previous fortnight");
+        factors.add("Forecast demand: " + f1(avg) + "/day (14-day avg " + f1(l.forecast.recentAvg()) + ")");
+        factors.add("14-day trend: " + signed(l.forecast.trendPct()) + "%");
         if (l.signal.disease() != null) {
-            factors.add("Seasonal signal: " + l.signal.disease().toLowerCase(Locale.ROOT) + " cases "
-                    + signed(l.signal.momentumPct()) + "% vs 3-week baseline, forecast uplift "
-                    + signed((l.signal.uplift() - 1) * 100) + "%");
+            factors.add(cap(l.signal.disease()) + " cases, 7 days: " + signed(l.signal.momentumPct()) + "%");
         }
-        factors.add(finite
-                ? "Days of stock remaining: " + f1(l.days) + " (stock-out around "
-                + asOf.plusDays((long) Math.floor(l.days)).format(DAY) + ")"
-                : "Stock lasts beyond the " + SIM_DAYS + "-day simulation window");
         if (!l.usable.isEmpty()) {
-            BatchDto first = l.usable.get(0);
-            factors.add("Earliest expiry: batch " + first.batchNo() + " on " + first.expiryDate().format(DAY_YEAR)
-                    + (l.projectedWaste > 0 ? "; " + qty(l.projectedWaste) + " " + unit + " likely to expire unused" : ""));
+            factors.add("Earliest expiry: " + l.usable.get(0).expiryDate().format(DAY_YEAR));
         }
-        factors.add("Model: damped Holt smoothing with weekday seasonality (alpha " + l.forecast.alpha() + ", beta "
-                + l.forecast.beta() + ")" + (l.forecast.wape() >= 0
-                ? ", back-test error " + f0(l.forecast.wape() * 100) + "% over the last 14 days" : ""));
+        if (l.projectedWaste > 0) {
+            factors.add("Likely to expire: " + qty(l.projectedWaste) + " " + unit);
+        }
+        if (l.forecast.wape() >= 0) {
+            factors.add("Back-test error: " + f0(l.forecast.wape() * 100) + "%");
+        }
 
         List<Integer> history = new ArrayList<>();
         for (int h : l.history) {
@@ -514,7 +506,7 @@ public final class AnalysisEngine {
 
         String action = l.action;
         if (action == null) {
-            action = "LOW".equals(level) ? "None" : "Watch. See indent advice.";
+            action = "LOW".equals(level) ? "None" : "Watch";
         }
         return new RiskRow(l.facility.id(), l.facility.code(), l.facility.name(), l.facility.type(),
                 l.medicine.id(), l.medicine.name(), unit, l.stock, Math.round(amc),
@@ -589,6 +581,10 @@ public final class AnalysisEngine {
 
     private static double round1(double v) {
         return Math.round(v * 10) / 10.0;
+    }
+
+    private static String cap(String s) {
+        return s.isEmpty() ? s : s.charAt(0) + s.substring(1).toLowerCase(Locale.ROOT);
     }
 
     private static String f0(double v) {

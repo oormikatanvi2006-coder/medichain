@@ -7,6 +7,10 @@ import com.medichain.forecast.engine.AnalysisEngine;
 import com.medichain.forecast.engine.Results.Analysis;
 import com.medichain.forecast.engine.Results.Retrieval;
 import com.medichain.forecast.engine.Results.RiskRow;
+import com.medichain.forecast.engine.Scenario;
+import com.medichain.forecast.web.ApiModels.ScenarioChange;
+import com.medichain.forecast.web.ApiModels.ScenarioResult;
+import com.medichain.forecast.web.ApiModels.ScenarioSummary;
 import com.medichain.forecast.web.ApiModels.Interpreted;
 import com.medichain.forecast.web.ApiModels.Meta;
 import com.medichain.forecast.web.ApiModels.PipelineStep;
@@ -64,6 +68,75 @@ public class QueryService {
         return run(label, district, chosen, all, horizonDays);
     }
 
+    /**
+     * What-if: runs the analysis on the current data and again with disease cases and demand changed, and
+     * reports what moves. Nothing is saved; transfer advice from a scenario is for planning only.
+     */
+    public ScenarioResult scenario(String requestedDistrict, Long medicineId, Integer horizonDays, double casePct,
+                                   double demandPct, String disease) {
+        String district = requestedDistrict != null && !requestedDistrict.isBlank() ? requestedDistrict : defaultDistrict;
+        int horizon = Math.max(1, Math.min(horizonDays != null ? horizonDays : DEFAULT_HORIZON, 90));
+        double cases = Math.max(-90, Math.min(casePct, 300));
+        double demand = Math.max(-50, Math.min(demandPct, 100));
+        Set<Long> ids = medicineId == null ? Set.of() : Set.of(medicineId);
+        Snapshot snapshot = inventory.snapshot(district, HISTORY_DAYS);
+        Analysis base = engine.analyse(snapshot, ids, horizon);
+        Analysis changed = engine.analyse(snapshot, ids, horizon,
+                new Scenario(1 + cases / 100.0, 1 + demand / 100.0, disease));
+
+        Map<String, RiskRow> baseRows = new LinkedHashMap<>();
+        base.risks().forEach(r -> baseRows.put(r.facilityId() + ":" + r.medicineId(), r));
+        List<ScenarioChange> changes = new ArrayList<>();
+        for (RiskRow s : changed.risks()) {
+            RiskRow b = baseRows.get(s.facilityId() + ":" + s.medicineId());
+            if (b == null) {
+                continue;
+            }
+            boolean riskMoved = !b.riskLevel().equals(s.riskLevel());
+            boolean daysMoved = b.daysToStockout() != null && s.daysToStockout() != null
+                    && Math.abs(b.daysToStockout() - s.daysToStockout()) >= 0.5
+                    && !("LOW".equals(b.riskLevel()) && "LOW".equals(s.riskLevel()));
+            if (riskMoved || daysMoved) {
+                changes.add(new ScenarioChange(s.facilityName(), s.medicineName(), s.unit(), s.currentStock(),
+                        b.forecastDailyDemand(), s.forecastDailyDemand(), b.daysToStockout(), s.daysToStockout(),
+                        b.riskLevel(), s.riskLevel(), s.suggestedAction()));
+            }
+        }
+        return new ScenarioResult(changed.district(), horizon, cases, demand,
+                disease == null || disease.isBlank() ? null : disease.toUpperCase(), summary(base), summary(changed),
+                changes.size() > 40 ? changes.subList(0, 40) : changes, changed.transfers());
+    }
+
+    private static ScenarioSummary summary(Analysis a) {
+        int due = 0;
+        int critical = 0;
+        int high = 0;
+        long forecast = 0;
+        Set<String> served = new LinkedHashSet<>();
+        a.transfers().forEach(t -> served.add(t.toFacilityId() + ":" + t.medicineId()));
+        int noDonor = 0;
+        for (RiskRow r : a.risks()) {
+            if (r.atRiskInHorizon()) {
+                due++;
+                if (!served.contains(r.facilityId() + ":" + r.medicineId())) {
+                    noDonor++;
+                }
+            }
+            if ("CRITICAL".equals(r.riskLevel())) {
+                critical++;
+            } else if ("HIGH".equals(r.riskLevel())) {
+                high++;
+            }
+            for (int units : r.forecast()) {
+                forecast += units;
+            }
+        }
+        int transferUnits = a.transfers().stream().mapToInt(t -> t.quantity()).sum();
+        int expiryUnits = a.expiryAlerts().stream().mapToInt(e -> e.unitsLikelyToExpire()).sum();
+        return new ScenarioSummary(due, critical, high, a.transfers().size(), transferUnits, noDonor,
+                a.reorders().size(), expiryUnits, forecast);
+    }
+
     public QueryResponse answer(QueryRequest request) {
         // 1. Understand the question
         List<String> districts = inventory.districts();
@@ -82,8 +155,8 @@ public class QueryService {
         boolean all = chosen.isEmpty();
         List<String> names = (all ? allMedicines : chosen).stream().map(MedicineDto::name).toList();
         Set<Long> ids = chosen.stream().map(MedicineDto::id).collect(Collectors.toSet());
-        pipeline.add(new PipelineStep("Query", "District " + district + ", "
-                + (all ? "all " + names.size() + " medicines" : String.join(" + ", names)) + ", next " + horizon + " days"));
+        pipeline.add(new PipelineStep("Query", district + " | "
+                + (all ? "all " + names.size() + " drugs" : String.join(", ", names)) + " | " + horizon + " days"));
 
         // 2. Retrieve from inventory-service over REST
         Snapshot snapshot = inventory.snapshot(district, HISTORY_DAYS);
@@ -91,23 +164,19 @@ public class QueryService {
         // 3. Forecast, risk, surplus matching, procurement
         Analysis analysis = engine.analyse(snapshot, ids, horizon);
         Retrieval r = analysis.retrieval();
-        pipeline.add(new PipelineStep("Retrieve", r.facilities() + " facilities, " + r.batches() + " batches with expiry, "
-                + r.consumptionRecords() + " daily consumption records, " + r.caseTrendRecords()
-                + " disease case records (GET inventory-service /api/snapshot)"));
+        pipeline.add(new PipelineStep("Retrieve", r.facilities() + " facilities, " + r.batches() + " batches, "
+                + r.consumptionRecords() + " consumption rows, " + r.caseTrendRecords() + " case rows"));
         long atRisk = analysis.risks().stream().filter(RiskRow::atRiskInHorizon).count();
-        pipeline.add(new PipelineStep("Analyse", r.stockLines() + " demand forecasts fitted and stock simulated "
-                + AnalysisEngine.SIM_DAYS + " days ahead; " + atRisk + " stock-out risks within " + horizon + " days, "
-                + analysis.expiryAlerts().size() + " batch(es) at expiry risk"));
+        pipeline.add(new PipelineStep("Analyse", r.stockLines() + " forecasts; " + atRisk + " stock-outs due; "
+                + analysis.expiryAlerts().size() + " batches at expiry risk"));
 
         // 4. Save recommendations
         Set<Long> analysed = new LinkedHashSet<>();
         analysis.risks().forEach(row -> analysed.add(row.medicineId()));
         List<TransferView> transfers =
                 recommendations.sync(analysis.district(), analysed, analysis.transfers(), queryText);
-        pipeline.add(new PipelineStep("Recommend", transfers.size() + " transfer(s) and " + analysis.reorders().size()
-                + " reorder suggestion(s), saved to the recommendation database"));
-        pipeline.add(new PipelineStep("Explain", "Each recommendation lists consumption trend, days of stock, "
-                + "expiry dates and distance"));
+        pipeline.add(new PipelineStep("Recommend", transfers.size() + " transfers, " + analysis.reorders().size()
+                + " indents"));
 
         // 5. Explain
         List<String> findings = new ArrayList<>();
@@ -119,26 +188,17 @@ public class QueryService {
         }
         for (RiskRow row : risky) {
             if (!covered.contains(row.facilityCode() + "|" + row.medicineName())) {
-                findings.add(row.facilityName() + " will stock out of " + row.medicineName() + " in "
-                        + row.daysToStockout() + " days and no facility within " + (int) AnalysisEngine.MAX_DISTANCE_KM
-                        + " km has spare stock: place an emergency order.");
+                findings.add(row.facilityName() + ": " + row.medicineName() + " out in " + row.daysToStockout()
+                        + " days. No donor within " + (int) AnalysisEngine.MAX_DISTANCE_KM + " km. Emergency indent.");
             }
         }
-        String scope = all ? "any essential medicine" : String.join(" or ", names);
         String answer;
         if (risky.isEmpty()) {
-            RiskRow lowest = analysis.risks().stream().filter(x -> x.daysToStockout() != null)
-                    .min((a, b) -> Double.compare(a.daysToStockout(), b.daysToStockout())).orElse(null);
-            answer = "No facility in " + analysis.district() + " is forecast to run out of " + scope + " in the next "
-                    + horizon + " days." + (lowest == null ? "" : " Lowest cover: " + lowest.facilityName() + " with "
-                    + lowest.daysToStockout() + " days of " + lowest.medicineName() + ".");
+            answer = analysis.district() + ", next " + horizon + " days: no stock-out due.";
         } else {
             long facilities = risky.stream().map(RiskRow::facilityCode).distinct().count();
-            answer = facilities + (facilities == 1 ? " facility" : " facilities") + " in " + analysis.district()
-                    + (facilities == 1 ? " is" : " are") + " at risk of running out of " + scope + " in the next "
-                    + horizon + " days (" + risky.size() + " stock line" + (risky.size() == 1 ? "" : "s") + "). "
-                    + transfers.size() + " transfer" + (transfers.size() == 1 ? "" : "s")
-                    + " from surplus facilities recommended.";
+            answer = analysis.district() + ", next " + horizon + " days: " + risky.size() + " stock lines at "
+                    + facilities + " facilities due to stock out. " + transfers.size() + " transfers advised.";
         }
 
         Map<String, Integer> counts = new LinkedHashMap<>();

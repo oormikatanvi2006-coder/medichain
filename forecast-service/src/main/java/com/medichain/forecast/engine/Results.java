@@ -37,7 +37,8 @@ public final class Results {
                            int fromStockBefore, int fromStockAfter, int toStockBefore, int toStockAfter,
                            double distanceKm, double receiverDaysBefore, double receiverDaysAfter,
                            double donorDaysBefore, double donorDaysAfter, String urgency, String rationale,
-                           List<String> keyFactors, List<String> batches) {
+                           List<String> keyFactors, List<String> batches, int expirySavedUnits,
+                           double expirySavedValue, double coverDaysGained) {
     }
 
     public record Reorder(Long facilityId, String facilityCode, String facilityName, Long medicineId,

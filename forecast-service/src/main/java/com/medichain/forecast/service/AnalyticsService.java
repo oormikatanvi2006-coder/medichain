@@ -119,6 +119,10 @@ public class AnalyticsService {
             recCounts.put(status, 0);
         }
         int moved = 0;
+        int executed = 0;
+        int expirySaved = 0;
+        double expirySavedValue = 0;
+        double coverAdded = 0;
         for (Recommendation r : recommendations.findAll()) {
             if (r.getDistrict() == null || !r.getDistrict().equalsIgnoreCase(snap.district())) {
                 continue;
@@ -126,6 +130,10 @@ public class AnalyticsService {
             recCounts.merge(r.getStatus(), 1, Integer::sum);
             if (Recommendation.EXECUTED.equals(r.getStatus())) {
                 moved += r.getQuantity();
+                executed++;
+                expirySaved += r.getExpirySavedUnits();
+                expirySavedValue += r.getExpirySavedValue();
+                coverAdded += r.getCoverDaysGained();
             }
         }
         int decided = recCounts.get(Recommendation.EXECUTED) + recCounts.get(Recommendation.REJECTED);
@@ -154,7 +162,8 @@ public class AnalyticsService {
         return new Analytics(snap.district(), snap.asOf(), pct(w30[1], w30[0]), pct(w90[1], w90[0]),
                 pct(w30[2], w30[3]), pct(w90[2], w90[3]), (int) w30[2], (int) (w30[0] - w30[1]), expiredUnits,
                 Math.round(expiredValue), riskUnits, Math.round(riskValue), riskCounts, recCounts, moved,
-                Math.round(acceptance * 10) / 10.0, facilityStats, weekStats, dayStats);
+                Math.round(acceptance * 10) / 10.0, facilityStats, weekStats, dayStats, executed, expirySaved,
+                expirySavedValue, Math.round(coverAdded * 10) / 10.0);
     }
 
     private static void add(double[] acc, int demanded, int dispensed, boolean stockout) {
