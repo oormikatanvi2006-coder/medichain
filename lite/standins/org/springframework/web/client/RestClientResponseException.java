@@ -1,0 +1,1 @@
+package org.springframework.web.client; import org.springframework.http.HttpStatusCode; public class RestClientResponseException extends RestClientException { public String getResponseBodyAsString() { return ""; } public HttpStatusCode getStatusCode() { return null; } }

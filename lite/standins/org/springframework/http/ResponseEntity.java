@@ -1,0 +1,1 @@
+package org.springframework.http; public class ResponseEntity<T> { public interface BodyBuilder { <T> ResponseEntity<T> body(T b); } public static BodyBuilder status(int s) { return null; } public static BodyBuilder status(HttpStatusCode s) { return null; } }

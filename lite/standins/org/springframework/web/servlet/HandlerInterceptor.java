@@ -1,0 +1,1 @@
+package org.springframework.web.servlet; import jakarta.servlet.http.*; public interface HandlerInterceptor { default boolean preHandle(HttpServletRequest request, HttpServletResponse response, Object handler) throws Exception { return true; } }

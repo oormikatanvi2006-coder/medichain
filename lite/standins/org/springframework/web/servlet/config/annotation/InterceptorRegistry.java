@@ -1,0 +1,1 @@
+package org.springframework.web.servlet.config.annotation; import org.springframework.web.servlet.HandlerInterceptor; public class InterceptorRegistry { public InterceptorRegistration addInterceptor(HandlerInterceptor i) { return new InterceptorRegistration(); } }
