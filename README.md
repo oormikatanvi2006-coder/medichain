@@ -32,6 +32,27 @@ Open **http://localhost:8082** and sign in. On Windows `run-windows.bat` starts 
 server and the H2 database with the JDK's own server and in-memory tables, so use it to try the
 system, not to meet a Spring Boot requirement. See `lite/README.txt`.
 
+## Deploy online (Docker + Render)
+
+[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/oormikatanvi2006-coder/medichain)
+
+`render.yaml` deploys both microservices from this repository, each from its own `Dockerfile`:
+
+| Render service | Folder | Role |
+| --- | --- | --- |
+| `medichain-inventory` | `inventory-service/` | Inventory REST API |
+| `medichain` | `forecast-service/` | Dashboard and analysis; calls `medichain-inventory` over REST |
+
+1. Sign in at render.com with GitHub.
+2. Click the button above (or New > Blueprint and pick this repository), then Apply.
+3. When both services show Live, open the address of the `medichain` service.
+
+On the free plan a service sleeps after 15 minutes without visitors; the first page load after that takes a few minutes.
+If the dashboard cannot reach the inventory service, open `medichain` > Environment on Render and set
+`INVENTORY_URL` to the address of `medichain-inventory` (for example `https://medichain-inventory.onrender.com`).
+
+Run the same containers locally: `docker compose up --build`, then open http://localhost:8082.
+
 ## Sign-in
 
 | User ID | Password | Role | Access |

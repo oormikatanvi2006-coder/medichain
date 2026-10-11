@@ -1,0 +1,15 @@
+# Run both services locally with Docker:  docker compose up --build
+# Then open http://localhost:8082
+services:
+  inventory-service:
+    build: ./inventory-service
+    ports:
+      - "8081:8081"
+  forecast-service:
+    build: ./forecast-service
+    environment:
+      INVENTORY_URL: http://inventory-service:8081
+    ports:
+      - "8082:8082"
+    depends_on:
+      - inventory-service

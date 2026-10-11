@@ -1,0 +1,30 @@
+# Render Blueprint: deploys both MediChain microservices from this repository.
+# Render dashboard -> New -> Blueprint -> pick this repository -> Apply.
+services:
+  - type: web
+    name: medichain-inventory
+    runtime: docker
+    plan: free
+    rootDir: inventory-service
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /api/districts
+    envVars:
+      - key: PORT
+        value: "10000"
+
+  - type: web
+    name: medichain
+    runtime: docker
+    plan: free
+    rootDir: forecast-service
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /
+    envVars:
+      - key: PORT
+        value: "10000"
+      # Link to inventory-service. Render fills in the other service's name.
+      - key: INVENTORY_HOST
+        fromService:
+          name: medichain-inventory
+          type: web
+          property: host
