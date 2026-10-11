@@ -24,7 +24,7 @@ cd inventory-service && mvn spring-boot:run      # terminal 1, port 8081 (start 
 cd forecast-service  && mvn spring-boot:run      # terminal 2, port 8082
 ```
 
-Open **http://localhost:8082** and sign in. On Windows `run-windows.bat` starts both.
+Open **https://medichain-eqvu.onrender.com/** and sign in. On Windows `run-windows.bat` starts both.
 
 ### Without Maven
 `lite/medichain-lite.jar` runs the same controllers, services and web client with only Java
