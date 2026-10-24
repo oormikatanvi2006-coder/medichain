@@ -138,7 +138,10 @@ public final class LiteServer {
                     body = in.readAllBytes();
                 }
                 type = file.endsWith(".css") ? "text/css; charset=utf-8"
-                        : file.endsWith(".js") ? "text/javascript; charset=utf-8" : "text/html; charset=utf-8";
+                        : file.endsWith(".js") ? "text/javascript; charset=utf-8"
+                        : file.endsWith(".png") ? "image/png"
+                        : file.endsWith(".svg") ? "image/svg+xml"
+                        : file.endsWith(".jpg") || file.endsWith(".jpeg") ? "image/jpeg" : "text/html; charset=utf-8";
             }
         } catch (ResponseStatusException e) {
             status = e.getStatusCode().value();
